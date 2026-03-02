@@ -111,9 +111,12 @@ class VoiceAssistantWebSocket : public Component {
   uint32_t interrupt_time_{0};
   static const uint32_t INTERRUPT_IGNORE_AUDIO_MS = 500;
 
-  // Diagnostic logging: first audio per direction per session
+  // Diagnostic logging
   bool first_audio_sent_{false};
   bool first_audio_received_{false};
+  uint32_t connection_count_{0};
+  uint32_t connect_millis_{0};
+  uint32_t audio_chunks_sent_{0};
 
   static const uint32_t SEND_AUDIO_TIMEOUT_MS = 100;
   static const uint32_t SEND_INTERRUPT_TIMEOUT_MS = 200;

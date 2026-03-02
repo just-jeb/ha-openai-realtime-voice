@@ -154,8 +154,17 @@ class RealtimeVoiceBridge:
         end_reason: dict,
     ) -> None:
         """Forward ESP32 binary audio and JSON control to OpenAI."""
+        msg_count = 0
+        t_start = time.monotonic()
         try:
             async for message in client_ws:
+                msg_count += 1
+                if msg_count <= 10:
+                    logger.info("[diag] client msg #%d: %s len=%d t=+%.3fs",
+                                msg_count,
+                                "bin" if isinstance(message, bytes) else "txt",
+                                len(message),
+                                time.monotonic() - t_start)
                 if isinstance(message, bytes):
                     if not first_audio_from_client[0]:
                         first_audio_from_client[0] = True
@@ -442,8 +451,13 @@ class RealtimeVoiceBridge:
         first_audio_to_client = [False]
 
         try:
+            logger.info("[diag] %s: starting OpenAI connect", client_id)
+            t0 = time.monotonic()
             openai_ws = await self._connect_openai()
+            logger.info("[diag] %s: OpenAI connected in %.3fs", client_id, time.monotonic() - t0)
             await self._configure_session(openai_ws)
+            logger.info("[diag] %s: session configured, starting forwarding tasks (%.3fs since client connect)",
+                        client_id, time.monotonic() - start_time)
             audio_queue: asyncio.Queue = asyncio.Queue()
 
             client_task = asyncio.create_task(
