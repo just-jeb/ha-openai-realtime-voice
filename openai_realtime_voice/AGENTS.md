@@ -49,6 +49,10 @@ ESP32 Voice PE                    Addon
 
 Single-stage Alpine image. Dependencies in `requirements.txt` (websockets, httpx, python-dotenv). Dockerfile runs `pip install -r requirements.txt`; no Poetry or LLVM.
 
+## Version
+
+When you change the addon (behavior, config, contract, or fixes), update the addon version in `config.yaml` using semver-like rules: breaking → bump major, new feature → minor, fix → patch. Do this until we have a better release/versioning solution.
+
 ## File layout (addon directory: `openai_realtime_voice/`)
 
 - `config.yaml` — Addon options schema and image URL (used by Supervisor).
@@ -56,6 +60,9 @@ Single-stage Alpine image. Dependencies in `requirements.txt` (websockets, httpx
 - `app/main.py` — Bridge logic, tools, WebSocket handlers.
 - `app/audio_recorder.py` — Optional WAV recording when `enable_recording` is true.
 - `requirements.txt` — websockets, httpx, python-dotenv.
+- `requirements-dev.txt` — for tests: pytest, pytest-asyncio.
+- `tests/` — pytest tests (happy-flow and regression).
+- `pytest.ini` — asyncio_mode = auto for tests.
 - `Dockerfile` — Single-stage; no Poetry. Used by `.github/workflows/build-addon.yml`.
 
 ## Keeping this doc current
@@ -65,3 +72,4 @@ Update when:
 - The WebSocket contract (audio format, control messages) changes
 - A config option or tool is added or changed
 - The Docker build or dependencies change
+- When shipping a fix or feature: update version in `config.yaml` (semver-like; see Version above).

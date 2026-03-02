@@ -107,14 +107,16 @@ class RealtimeVoiceBridge:
 
     async def _connect_openai(self):
         """Open WebSocket to OpenAI Realtime API."""
-        url = "wss://api.openai.com/v1/realtime?model=gpt-realtime"
-        extra_headers = {
+        url = os.environ.get(
+            "OPENAI_REALTIME_URL", "wss://api.openai.com/v1/realtime?model=gpt-realtime"
+        )
+        additional_headers = {
             "Authorization": f"Bearer {self.openai_api_key}",
             "OpenAI-Beta": "realtime=v1",
         }
         ws = await websockets.connect(
             url,
-            extra_headers=extra_headers,
+            additional_headers=additional_headers,
             ping_interval=20,
             ping_timeout=20,
             close_timeout=5,
