@@ -26,13 +26,6 @@ Third-Party Licenses
 
 This project uses the following third-party components:
 
-## Pipecat
-
-This project uses [Pipecat](https://github.com/pipecat-ai/pipecat) which is 
-licensed under BSD 2-Clause License.
-
-See the license at: https://github.com/pipecat-ai/pipecat/blob/main/LICENSE
-
 ## ESPHome / Home Assistant Voice PE
 
 This project uses the `voice_kit` component from ESPHome's 

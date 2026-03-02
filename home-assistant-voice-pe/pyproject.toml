@@ -2,7 +2,7 @@
 name = "home-assistant-voice-pe"
 version = "0.1.0"
 description = "ESPHome client configuration for Home Assistant Voice PE hardware"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["Jenia Barabanov"]
 readme = "INSTALLATION.md"
 package-mode = false
 

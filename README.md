@@ -1,60 +1,60 @@
-# OpenAI Realtime Voice Agent
+# OpenAI Realtime Voice
 
-Voice control system for Home Assistant using OpenAI Realtime API with ESP32/ESP32-S3 devices.
+Voice interface for Home Assistant using the OpenAI Realtime API for low-latency, natural conversation. The device wakes on a phrase, streams speech to the addon, and plays back answers; web search is available for live information (e.g. current weather, today’s events) via the Responses API.
+
+## Purpose and intended use
+
+- **Primary use:** Stationary voice Q&A device — you can tune it (e.g. short answers, language, tone) via the addon’s `instructions`. Common use cases include a family/kids device or a general-purpose voice assistant.
+- **Voice path:** Wake word on device → WebSocket → HA addon → OpenAI Realtime API (speech-to-speech). No smart home control in this pipeline.
+- **Web search:** Handled inside the addon via a `search_web` tool that calls the OpenAI Responses API (optional separate API key).
+- **Smart home:** Can be a separate, fully local HA voice pipeline (e.g. different wake word, Whisper + Piper + Assist). Not part of this addon.
 
 ## Components
 
-This repository contains two main components:
-
-- **Server** (`openai_realtime_voice_agent/`): Home Assistant addon that provides OpenAI Realtime API integration and WebSocket server for ESP32 devices
-- **Client** (`home-assistant-voice-pe/`): ESPHome configuration for ESP32/ESP32-S3 devices with custom WebSocket component
+- **Server** (`openai_realtime_voice/`): Home Assistant addon — WebSocket server that bridges the device to the OpenAI Realtime API and to web search (Responses API).
+- **Client** (`home-assistant-voice-pe/`): ESPHome configuration and custom WebSocket component for the Home Assistant Voice PE (ESP32-S3).
 
 ## Features
 
-### Server Features
+### Server (addon)
 
-- **OpenAI Realtime API Integration**: Direct integration with OpenAI's Realtime API for natural language interactions
-- **WebSocket Server**: Bidirectional WebSocket connection for ESP32 devices with low latency
-- **Home Assistant MCP Integration**: Integration with Model Context Protocol for smart home control
-- **Voice Activity Detection (VAD)**: Automatic detection of speech vs. silence for optimal conversation flow
-- **Session Management**: Automatic session reuse for better performance and conversation continuity
-- **Audio Recording**: Optional audio recording for debugging purposes
+- Direct bridge to OpenAI Realtime API (one connection per conversation; no 60‑minute orphan sessions).
+- WebSocket server for the device (raw PCM audio and JSON control).
+- Server-side VAD for turn-taking.
+- Two tools: end conversation (`disconnect_client`) and live info (`search_web` via Responses API).
+- Optional audio recording for debugging.
 
-### Client Features
+### Client (Voice PE)
 
-- **Voice Assistant**: Real-time voice interaction with OpenAI Realtime API via WebSocket
-- **Wake Word Detection**: Multiple wake words supported ("Okay Nabu", "Hey Jarvis", "Hey Mycroft")
-- **LED Feedback**: Visual status indicators via 12-LED ring for various states
-- **Hardware Controls**: Button controls and hardware mute switch for privacy
-- **Auto Gain Control (AGC)**: Hardware-based automatic volume adjustment for consistent audio quality
-- **Echo Cancellation (AEC)**: Hardware-based echo suppression prevents feedback
+- Wake word detection on device (e.g. “Okay Nabu”, “Hey Jarvis”).
+- Real-time voice over WebSocket to the addon.
+- Interrupt by saying the wake word while the assistant is speaking.
+- LED feedback, button, mute switch, AGC, AEC.
 
-### Conversation Behavior
+### Conversation behavior
 
-- **Immediate Response**: After wake word detection, you can speak immediately without waiting
-- **Natural Conversation Flow**: During silence, you can continue speaking naturally - the assistant listens continuously
-- **Interruption Handling**: User input during assistant responses is ignored, except for wake words which can interrupt
-- **Stop Words**: Conversation ends when a stop word is detected (e.g., "thank you", "stop") using a dedicated tool
-- **Session Continuity**: Previous conversation history is maintained when a new wake word is spoken within the session reuse timeout period after the last conversation ended
-- **Wake Word Restart**: After a conversation ends, a new wake word starts a fresh interaction while preserving context within the timeout window
+- Back-and-forth in a single session until the user stops (goodbye, button, or inactivity).
+- Each new wake word starts a new session; no cross-session context.
 
 ## Documentation
 
-- **Server Installation**: See [`openai_realtime_voice_agent/README.md`](openai_realtime_voice_agent/README.md)
-- **Client Installation**: See [`home-assistant-voice-pe/README.md`](home-assistant-voice-pe/README.md)
+- **Server:** [openai_realtime_voice/README.md](openai_realtime_voice/README.md) — install and configure the addon.
+- **Client:** [home-assistant-voice-pe/README.md](home-assistant-voice-pe/README.md) — build and flash the device.
+- **Development:** [DEVELOPMENT.md](DEVELOPMENT.md) — local run and Docker build for server and client.
 
-## Quick Start
+## Quick start
 
-1. **Install the Server Addon**: Follow the [server documentation](openai_realtime_voice_agent/README.md)
-2. **Configure ESP32 Device**: Follow the [client documentation](home-assistant-voice-pe/README.md)
+1. Install and configure the addon (see server README). Required: `openai_api_key`. Optional: `web_search_api_key` for web search.
+2. Build and flash the ESP32 with the client config (see client README). Set `server_url` in secrets to your addon WebSocket URL (e.g. `ws://homeassistant.local:8080`).
 
-## Known Issues
+## Known issues
 
-The endpoint `http://supervisor/core/api/mcp` is not working. You need to:
-- Create a long-lived token in Home Assistant
-- Use it in the addon configuration
-- Set the Home Assistant MCP URL to `http://localhost:8123/api/mcp` (or your Home Assistant URL). The MCP Server needs to be enabled in Home Assistant.
+- **WebRTC:** The `voice_assistant_webrtc` component is metadata only; everything uses WebSocket.
+
+## Acknowledgments
+
+The client firmware and WebSocket component in this repo were forked from [fjfricke/ha-openai-realtime](https://github.com/fjfricke/ha-openai-realtime) (Felix Fricke), which in turn builds on [esphome/home-assistant-voice-pe](https://github.com/esphome/home-assistant-voice-pe). Thanks to both for the Voice PE integration and the bridge idea.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE).

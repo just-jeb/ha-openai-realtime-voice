@@ -1,0 +1,67 @@
+# Server Addon — Agent Guide
+
+## Design intent
+
+This addon is a **direct WebSocket bridge** between the Voice PE device and the OpenAI Realtime API. It receives raw PCM over WebSocket, forwards it to Realtime, and streams response audio back. Implementation is a single Python module (`app/main.py`) plus optional recording.
+
+**Lifecycle:** One client connection = one OpenAI Realtime session. When the client disconnects, the upstream session is closed in a `try/finally` block, so there is no long-lived orphan session and the 60-minute API cap is not an issue in normal use.
+
+## Architecture
+
+```
+ESP32 Voice PE                    Addon
++------------------+  WebSocket   +---------------------------+
+| micro_wake_word  |   :8080     |  RealtimeVoiceBridge      |
+| voice_assistant  | --- PCM ---> |    client_ws <-> openai_ws|
+| _websocket       | <--- PCM --- |    (one openai_ws per     |
+| I2S Speaker      | <-- JSON --  |     client connection)    |
++------------------+             +---------------------------+
+                                       | disconnect_client tool
+                                       | search_web tool ------> Responses API
+```
+
+- **Audio:** 24 kHz, 16-bit, mono PCM. Device binary frames are base64-encoded and sent as `input_audio_buffer.append`; `response.audio.delta` is base64-decoded and sent as binary to the device.
+- **Interrupt:** Device sends `{"type":"interrupt"}`; server sends `response.cancel` to OpenAI.
+- **Disconnect:** When the user says goodbye, OpenAI calls `disconnect_client`; server sends `{"type":"disconnect"}` to the device and closes the client WebSocket.
+- **Web search:** The `search_web` tool calls the OpenAI Responses API (`web_search_preview`) using `WEB_SEARCH_API_KEY` or `OPENAI_API_KEY`.
+
+## Design decisions
+
+- **No MCP.** Smart home is intended as a separate, local HA voice pipeline (e.g. different wake word). This addon is for voice Q&A and web search only.
+- **Two tools:** `disconnect_client` and `search_web`, both implemented in `main.py` in `_handle_tool_call`.
+- **Config:** HA Addon UI → `config.yaml` → `run.sh` (bashio) → env vars → `main.py`. No config file parsing in Python.
+
+## Config options
+
+- `openai_api_key` — Required. Realtime API (and Responses API if `web_search_api_key` is unset).
+- `websocket_port` — Default 8080.
+- `vad_threshold`, `vad_prefix_padding_ms`, `vad_silence_duration_ms` — Server-side VAD.
+- `instructions` — System prompt for the model.
+- `web_search_api_key` — Optional; if empty, `openai_api_key` is used for web search.
+- `enable_recording` — If true, WAVs written under `recordings/` via `app/audio_recorder.py`.
+
+## Adding a tool
+
+1. Add the tool schema to the `TOOLS` list in `main.py`.
+2. In `_handle_tool_call`, handle the tool name: parse arguments, run logic, call `_send_tool_result(openai_ws, call_id, result_json_string)` and send `response.create` if needed.
+
+## Docker build
+
+Single-stage Alpine image. Dependencies in `requirements.txt` (websockets, httpx, python-dotenv). Dockerfile runs `pip install -r requirements.txt`; no Poetry or LLVM.
+
+## File layout (addon directory: `openai_realtime_voice/`)
+
+- `config.yaml` — Addon options schema and image URL (used by Supervisor).
+- `root/run.sh` — Entrypoint; reads bashio config and exports env for `app.main`.
+- `app/main.py` — Bridge logic, tools, WebSocket handlers.
+- `app/audio_recorder.py` — Optional WAV recording when `enable_recording` is true.
+- `requirements.txt` — websockets, httpx, python-dotenv.
+- `Dockerfile` — Single-stage; no Poetry. Used by `.github/workflows/build-addon.yml`.
+
+## Keeping this doc current
+
+Update when:
+
+- The WebSocket contract (audio format, control messages) changes
+- A config option or tool is added or changed
+- The Docker build or dependencies change

@@ -9,7 +9,7 @@
       "onAutoForward": "notify"
     },
     "8080": {
-      "label": "WebRTC Server",
+      "label": "WebSocket Server",
       "onAutoForward": "ignore"
     }
   },

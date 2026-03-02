@@ -6,21 +6,21 @@ on:
       - main
       - master
     paths:
-      - 'openai_realtime_voice_agent/**'
+      - 'openai_realtime_voice/**'
       - '.github/workflows/build-addon.yml'
   pull_request:
     branches:
       - main
       - master
     paths:
-      - 'openai_realtime_voice_agent/**'
+      - 'openai_realtime_voice/**'
   release:
     types: [published]
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}/openai-realtime-voice-agent
+  IMAGE_NAME: ${{ github.repository }}/openai-realtime-voice
 
 jobs:
   build:
@@ -44,7 +44,7 @@ jobs:
       - name: Extract version from config.yaml
         id: version
         run: |
-          VERSION=$(grep '^version:' openai_realtime_voice_agent/config.yaml | sed 's/version: "\(.*\)"/\1/')
+          VERSION=$(grep '^version:' openai_realtime_voice/config.yaml | sed 's/version: "\(.*\)"/\1/')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
 
@@ -79,8 +79,8 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: ./openai_realtime_voice_agent
-          file: ./openai_realtime_voice_agent/Dockerfile
+          context: ./openai_realtime_voice
+          file: ./openai_realtime_voice/Dockerfile
           platforms: ${{ steps.arch-map.outputs.platform }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: |

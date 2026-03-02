@@ -100,7 +100,7 @@ void VoiceAssistantWebSocket::loop() {
   }
   
   // Auto-stop: Check if we should stop after inactivity
-  // Stop if: speaker hasn't spoken for 5 seconds
+  // Stop if: speaker hasn't spoken for AUTO_STOP_INACTIVITY_MS (20 seconds)
   // Note: We only check speaker audio, not microphone audio, because:
   // - Microphone always sends audio (background noise, silence, etc.)
   // - OpenAI's server_vad handles voice activity detection
@@ -108,10 +108,10 @@ void VoiceAssistantWebSocket::loop() {
   if (this->state_ == VOICE_ASSISTANT_WEBSOCKET_RUNNING) {
     uint32_t current_time = millis();
     uint32_t time_since_speaker_audio = current_time - this->last_speaker_audio_time_;
-    
+
     // Only check if we've received at least one audio chunk (to avoid stopping immediately)
     if (this->last_speaker_audio_time_ > 0) {
-      // Stop if speaker hasn't spoken for 5 seconds
+      // Stop if speaker hasn't spoken for AUTO_STOP_INACTIVITY_MS (20 seconds)
       // If user speaks during this time, OpenAI will generate new audio, resetting the timer
       if (time_since_speaker_audio > AUTO_STOP_INACTIVITY_MS) {
         ESP_LOGI(TAG, "Auto-stopping: Speaker inactive for %u ms (threshold: %u ms)", 

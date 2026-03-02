@@ -79,6 +79,7 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   fast_connect: false
+  power_save_mode: none
   on_connect:
     - lambda: id(improv_ble_in_progress) = false;
     - script.execute: control_leds
@@ -88,10 +89,10 @@ wifi:
 network:
 
 logger:
-  level: DEBUG
+  level: INFO
   logs:
     sensor: WARN
-    voice_assistant_websocket: DEBUG
+    voice_assistant_websocket: INFO
 
 api:
   id: api_id
@@ -936,7 +937,7 @@ speaker:
     dac_type: external
     channel: stereo  # Voice PE hardware expects stereo
     timeout: never
-    buffer_duration: 100ms
+    buffer_duration: 300ms
     audio_dac: aic3204_dac
   
   # Virtual speaker to combine announcement and media streams together into one output
@@ -965,7 +966,7 @@ speaker:
     output_speaker: announcement_mixing_input
     sample_rate: 48000  # Output sample rate
     bits_per_sample: 16
-    buffer_duration: 500ms
+    buffer_duration: 1200ms
 
 # Media Player for voice assistant audio output (like original HA Voice)
 media_player:
@@ -1074,10 +1075,12 @@ micro_wake_word:
 
 # External Components - Custom voice_assistant_websocket component
 external_components:
-  # Custom Voice Assistant WebSocket Component (local)
+  # Custom Voice Assistant WebSocket Component
   - source:
-      type: local
-      path: esphome/components
+      type: git
+      url: https://github.com/just-jeb/ha-openai-realtime-voice
+      ref: main
+      path: home-assistant-voice-pe/esphome/components
     components: [voice_assistant_websocket]
   # Voice PE Hardware Components
   - source:
@@ -1097,8 +1100,7 @@ voice_assistant_websocket:
   # Audio input (microphone) - reference to I2S audio input
   microphone: i2s_mics
   
-  # Audio output - use resampler speaker (media_player uses this for volume control)
-  # We resample 24kHz -> 48kHz in code, then send to resampler which passes through
+  # Audio output - server sends 24kHz; ESPHome resampler converts 24kHz -> 48kHz for I2S
   speaker: voice_resampling_speaker
   
   # State callbacks for LED control

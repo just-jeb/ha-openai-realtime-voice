@@ -1,7 +1,8 @@
-# OpenAI Realtime Voice Agent - Client
+# OpenAI Realtime Voice — Client
 
-ESPHome configuration for ESP32/ESP32-S3 devices to connect to the OpenAI Realtime Voice Agent server.
-It is mainly based on https://github.com/esphome/home-assistant-voice-pe.
+ESPHome configuration for the Home Assistant Voice PE (ESP32-S3) to connect to the OpenAI Realtime addon. The device listens for a wake word, streams mic audio to the addon over WebSocket, and plays back the assistant’s voice. Used with the server addon in this repo for voice Q&A (and optional web search).
+
+Based on [esphome/home-assistant-voice-pe](https://github.com/esphome/home-assistant-voice-pe).
 
 ## Prerequisites
 

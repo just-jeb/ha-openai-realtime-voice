@@ -1,0 +1,31 @@
+name: OpenAI Realtime Voice
+version: "0.1.0"
+slug: openai_realtime_voice
+description: WebSocket bridge from Voice PE to OpenAI Realtime API (voice Q&A and web search)
+url: https://github.com/just-jeb/ha-openai-realtime-voice
+arch:
+  - aarch64
+  - amd64
+init: false
+startup: application
+boot: auto
+host_network: true
+options:
+  openai_api_key: ""
+  websocket_port: 8080
+  vad_threshold: 0.5
+  vad_prefix_padding_ms: 300
+  vad_silence_duration_ms: 500
+  instructions: "You are a friendly voice assistant. Keep answers clear and concise."
+  web_search_api_key: ""
+  enable_recording: false
+schema:
+  openai_api_key: password
+  websocket_port: int(1024,65535)
+  vad_threshold: float(0.0,1.0)
+  vad_prefix_padding_ms: int
+  vad_silence_duration_ms: int
+  instructions: str
+  web_search_api_key: password
+  enable_recording: bool
+image: ghcr.io/just-jeb/ha-openai-realtime-voice/openai-realtime-voice-{arch}
