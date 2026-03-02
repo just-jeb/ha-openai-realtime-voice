@@ -1070,6 +1070,7 @@ external_components:
       ref: main
       path: home-assistant-voice-pe/esphome/components
     components: [voice_assistant_websocket]
+    refresh: 0s
   # Voice PE Hardware Components
   - source:
       type: git
