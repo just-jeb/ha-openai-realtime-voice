@@ -52,8 +52,9 @@ esphome:
       - script.execute: control_leds
       - delay: 1s
       - switch.turn_on: internal_speaker_amp
-      # init_in_progress will be set to false when API connects (see api.on_client_connected)
-      # micro_wake_word will be started when API connects (see api.on_client_connected)
+      - micro_wake_word.start:
+          id: mww
+      - lambda: id(init_in_progress) = false;
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -99,11 +100,7 @@ api:
   encryption:
     key: !secret api_encryption_key
   on_client_connected:
-    - lambda: id(init_in_progress) = false;
     - script.execute: control_leds
-    # Start micro_wake_word when API connects (ensures it's ready)
-    - micro_wake_word.start:
-        id: mww
   on_client_disconnected:
     - script.execute: control_leds
 
