@@ -4,7 +4,12 @@
 
 This addon is a **direct WebSocket bridge** between the Voice PE device and the OpenAI Realtime API. It receives raw PCM over WebSocket, forwards it to Realtime, and streams response audio back. Implementation is a single Python module (`app/main.py`) plus optional recording.
 
-**Lifecycle:** One client connection = one OpenAI Realtime session. When the client disconnects, the upstream session is closed in a `try/finally` block, so there is no long-lived orphan session and the 60-minute API cap is not an issue in normal use.
+**Lifecycle:** One client connection = one OpenAI Realtime session. The
+three forwarding tasks (client→OpenAI, OpenAI→client, audio_sender) run
+concurrently; the first to finish (client disconnect, OpenAI disconnect,
+or `disconnect_client` tool) triggers cancellation of the other two and
+immediate closure of both WebSockets. No polling a done flag — cleanup
+is prompt and predictable. Session end is logged with duration and reason.
 
 ## Architecture
 
@@ -22,7 +27,7 @@ ESP32 Voice PE                    Addon
 
 - **Audio:** 24 kHz, 16-bit, mono PCM. Device binary frames are base64-encoded and sent as `input_audio_buffer.append`; `response.audio.delta` is base64-decoded and sent as binary to the device.
 - **Interrupt:** Device sends `{"type":"interrupt"}`; server sends `response.cancel` to OpenAI.
-- **Disconnect:** When the user says goodbye, OpenAI calls `disconnect_client`; server sends `{"type":"disconnect"}` to the device and closes the client WebSocket.
+- **Disconnect:** When the user says goodbye, OpenAI calls `disconnect_client`; server sends `{"type":"disconnect"}` to the device, returns from the handler so the task ends, and the cancellation cascade closes both WebSockets.
 - **Web search:** The `search_web` tool calls the OpenAI Responses API (`web_search_preview`) using `WEB_SEARCH_API_KEY` or `OPENAI_API_KEY`.
 
 ## Design decisions

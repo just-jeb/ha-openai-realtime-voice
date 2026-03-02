@@ -1,13 +1,13 @@
 """
 Direct WebSocket bridge: ESP32 Voice PE <-> OpenAI Realtime API.
 
-One client connection = one OpenAI Realtime session. Lifecycle is correct by
-construction (try/finally closes upstream on disconnect).
+One client connection = one OpenAI Realtime session. When any forwarding task
+ends (client disconnect, OpenAI disconnect, or disconnect tool), the others
+are cancelled and both WebSockets are closed immediately.
 
 Audio pacing: OpenAI streams response audio faster than real-time. The ESP32
-client can only consume at 24 kHz × 2 bytes = 48 000 bytes/sec. A token-bucket
-paced sender buffers incoming deltas and sends to the client at exactly the
-playback rate, preventing queue overflow on the device.
+client consumes at 24 kHz × 2 bytes = 48 000 bytes/sec. A token-bucket paced
+sender buffers incoming deltas and sends to the client at playback rate.
 """
 import os
 import sys
@@ -15,6 +15,7 @@ import asyncio
 import json
 import base64
 import logging
+import time
 import uuid
 from typing import Optional
 
@@ -147,16 +148,18 @@ class RealtimeVoiceBridge:
         self,
         client_ws,
         openai_ws,
-        done: asyncio.Event,
         client_id: str,
         audio_queue: asyncio.Queue,
+        first_audio_from_client: list,
+        end_reason: dict,
     ) -> None:
         """Forward ESP32 binary audio and JSON control to OpenAI."""
         try:
             async for message in client_ws:
-                if done.is_set():
-                    break
                 if isinstance(message, bytes):
+                    if not first_audio_from_client[0]:
+                        first_audio_from_client[0] = True
+                        logger.info("First audio from client (%d bytes)", len(message))
                     if len(message) % 2 != 0:
                         message = message + b"\x00"
                     b64 = base64.standard_b64encode(message).decode("ascii")
@@ -174,27 +177,31 @@ class RealtimeVoiceBridge:
                     except (json.JSONDecodeError, TypeError):
                         pass
         except websockets.exceptions.ConnectionClosed as e:
-            logger.info(f"Client connection closed: {e.code} {e.reason}")
+            end_reason["reason"] = "client_disconnected"
+            end_reason["code"] = e.code
+            logger.info("client_to_openai ended (reason: connection_closed, code: %s)", e.code)
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            logger.error(f"Error in client_to_openai: {e}", exc_info=True)
+            logger.error("Error in client_to_openai: %s", e, exc_info=True)
+            end_reason["reason"] = "client_to_openai_error"
         finally:
-            done.set()
+            if "reason" not in end_reason:
+                end_reason["reason"] = "client_disconnected"
 
     async def _openai_to_client(
         self,
         client_ws,
         openai_ws,
-        done: asyncio.Event,
         client_id: str,
         audio_queue: asyncio.Queue,
+        end_reason: dict,
     ) -> None:
         """Forward OpenAI events to ESP32; audio goes through paced queue."""
         delta_count = 0
         delta_bytes_total = 0
         try:
             async for raw in openai_ws:
-                if done.is_set():
-                    break
                 if not isinstance(raw, str):
                     continue
                 try:
@@ -228,69 +235,88 @@ class RealtimeVoiceBridge:
                     output = response.get("output", [])
                     for item in output:
                         if item.get("type") == "function_call":
-                            await self._handle_tool_call(
-                                client_ws, openai_ws, item, done,
-                                audio_queue,
+                            should_stop = await self._handle_tool_call(
+                                client_ws, openai_ws, item, audio_queue
                             )
+                            if should_stop:
+                                end_reason["reason"] = "disconnect_tool"
+                                return
 
                 elif ev_type == "error":
-                    logger.error(f"OpenAI error: {event.get('message', event)}")
+                    logger.error("OpenAI error: %s", event.get("message", event))
                 elif ev_type == "session.created":
                     logger.debug("Session created")
                 elif ev_type == "session.updated":
                     logger.debug("Session updated")
         except websockets.exceptions.ConnectionClosed as e:
-            logger.info(f"OpenAI connection closed: {e.code} {e.reason}")
+            end_reason["reason"] = "openai_disconnected"
+            end_reason["code"] = e.code
+            logger.info("openai_to_client ended (reason: connection_closed, code: %s)", e.code)
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            logger.error(f"Error in openai_to_client: {e}", exc_info=True)
+            logger.error("Error in openai_to_client: %s", e, exc_info=True)
+            end_reason["reason"] = "openai_to_client_error"
         finally:
-            done.set()
+            if "reason" not in end_reason:
+                end_reason["reason"] = "openai_disconnected"
 
     async def _audio_sender(
         self,
         client_ws,
         audio_queue: asyncio.Queue,
-        done: asyncio.Event,
+        first_audio_to_client: list,
+        end_reason: dict,
     ) -> None:
         """Send buffered audio to client at exactly the playback rate (token bucket)."""
         buffer = bytearray()
         bytes_sent = 0
         start_time: Optional[float] = None
         loop = asyncio.get_event_loop()
+        try:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(audio_queue.get(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    continue
 
-        while not done.is_set():
-            # Wait for data from the producer
-            try:
-                chunk = await asyncio.wait_for(audio_queue.get(), timeout=0.1)
-            except asyncio.TimeoutError:
-                continue
+                if chunk is None:
+                    if buffer:
+                        await client_ws.send(bytes(buffer))
+                        buffer.clear()
+                    bytes_sent = 0
+                    start_time = None
+                    continue
 
-            if chunk is None:
-                # Sentinel: response audio ended — flush remaining partial buffer
-                if buffer:
-                    await client_ws.send(bytes(buffer))
-                    buffer.clear()
-                bytes_sent = 0
-                start_time = None
-                continue
+                if not first_audio_to_client[0]:
+                    first_audio_to_client[0] = True
+                    logger.info("First audio to client (%d bytes)", len(chunk))
 
-            buffer.extend(chunk)
+                buffer.extend(chunk)
 
-            # Send in SEND_CHUNK_SIZE (20 ms) pieces at real-time rate
-            while len(buffer) >= SEND_CHUNK_SIZE and not done.is_set():
-                to_send = bytes(buffer[:SEND_CHUNK_SIZE])
-                del buffer[:SEND_CHUNK_SIZE]
+                while len(buffer) >= SEND_CHUNK_SIZE:
+                    to_send = bytes(buffer[:SEND_CHUNK_SIZE])
+                    del buffer[:SEND_CHUNK_SIZE]
 
-                if start_time is None:
-                    start_time = loop.time()
+                    if start_time is None:
+                        start_time = loop.time()
 
-                bytes_sent += len(to_send)
-                target_time = start_time + bytes_sent / BYTES_PER_SEC
-                now = loop.time()
-                if target_time > now:
-                    await asyncio.sleep(target_time - now)
+                    bytes_sent += len(to_send)
+                    target_time = start_time + bytes_sent / BYTES_PER_SEC
+                    now = loop.time()
+                    if target_time > now:
+                        await asyncio.sleep(target_time - now)
 
-                await client_ws.send(to_send)
+                    await client_ws.send(to_send)
+        except asyncio.CancelledError:
+            raise
+        except websockets.exceptions.ConnectionClosed:
+            if "reason" not in end_reason:
+                end_reason["reason"] = "client_disconnected"
+        except Exception as e:
+            logger.error("Error in audio_sender: %s", e, exc_info=True)
+            if "reason" not in end_reason:
+                end_reason["reason"] = "audio_sender_error"
 
     @staticmethod
     def _clear_audio_queue(audio_queue: asyncio.Queue) -> None:
@@ -310,25 +336,22 @@ class RealtimeVoiceBridge:
         client_ws,
         openai_ws,
         item: dict,
-        done: asyncio.Event,
         audio_queue: asyncio.Queue,
-    ) -> None:
-        """Execute tool and send result back to OpenAI."""
+    ) -> bool:
+        """Execute tool. Returns True if session should end (disconnect_client)."""
         name = item.get("name")
         call_id = item.get("call_id")
         args_str = item.get("arguments", "{}")
         if not call_id:
-            return
+            return False
         try:
             args = json.loads(args_str) if args_str else {}
         except json.JSONDecodeError:
             args = {}
 
         if name == "disconnect_client":
-            logger.info("Disconnect tool called")
+            logger.info("Disconnect tool called, notifying client")
             self._clear_audio_queue(audio_queue)
-            result = json.dumps({"success": True, "message": "Disconnected"})
-            await self._send_tool_result(openai_ws, call_id, result)
             try:
                 await client_ws.send(
                     json.dumps({
@@ -337,15 +360,9 @@ class RealtimeVoiceBridge:
                         "reason": args.get("reason", "user_requested_stop"),
                     })
                 )
-                await asyncio.sleep(0.1)
             except Exception:
                 pass
-            try:
-                await client_ws.close()
-            except Exception:
-                pass
-            done.set()
-            return
+            return True
 
         if name == "search_web":
             query = args.get("query", "")
@@ -353,20 +370,21 @@ class RealtimeVoiceBridge:
                 await self._send_tool_result(
                     openai_ws, call_id, json.dumps({"error": "Missing query"})
                 )
-                return
+                return False
             try:
                 text = await self._web_search(query)
                 await self._send_tool_result(openai_ws, call_id, json.dumps({"result": text}))
             except Exception as e:
-                logger.warning(f"Web search failed: {e}")
+                logger.warning("Web search failed: %s", e)
                 await self._send_tool_result(
                     openai_ws, call_id, json.dumps({"error": str(e)})
                 )
-            return
+            return False
 
         await self._send_tool_result(
             openai_ws, call_id, json.dumps({"error": f"Unknown tool: {name}"})
         )
+        return False
 
     async def _send_tool_result(self, openai_ws, call_id: str, output: str) -> None:
         """Send function_call_output item and trigger response.create."""
@@ -400,7 +418,6 @@ class RealtimeVoiceBridge:
             )
             resp.raise_for_status()
             data = resp.json()
-        # Extract text from first output item of type message
         output = data.get("output", [])
         for item in output:
             if item.get("type") == "message":
@@ -411,26 +428,58 @@ class RealtimeVoiceBridge:
         return "No result from web search."
 
     async def handle_client(self, client_ws) -> None:
-        """One client connection = one OpenAI session. Always."""
+        """One client connection = one OpenAI session. First task to finish triggers cleanup."""
         client_id = self._client_id_from_ws(client_ws)
-        logger.info(f"Client connected: {client_id}")
+        logger.info("Client connected: %s", client_id)
+        start_time = time.monotonic()
 
         if self.recorder:
             self.recorder.start_recording(client_id)
 
         openai_ws = None
+        end_reason = {}
+        first_audio_from_client = [False]
+        first_audio_to_client = [False]
+
         try:
             openai_ws = await self._connect_openai()
             await self._configure_session(openai_ws)
-            done = asyncio.Event()
             audio_queue: asyncio.Queue = asyncio.Queue()
-            await asyncio.gather(
-                self._client_to_openai(client_ws, openai_ws, done, client_id, audio_queue),
-                self._openai_to_client(client_ws, openai_ws, done, client_id, audio_queue),
-                self._audio_sender(client_ws, audio_queue, done),
+
+            client_task = asyncio.create_task(
+                self._client_to_openai(
+                    client_ws, openai_ws, client_id, audio_queue,
+                    first_audio_from_client, end_reason,
+                )
             )
+            openai_task = asyncio.create_task(
+                self._openai_to_client(
+                    client_ws, openai_ws, client_id, audio_queue, end_reason
+                )
+            )
+            sender_task = asyncio.create_task(
+                self._audio_sender(
+                    client_ws, audio_queue, first_audio_to_client, end_reason
+                )
+            )
+
+            finished, pending = await asyncio.wait(
+                [client_task, openai_task, sender_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+
+            for task in finished:
+                exc = task.exception()
+                if exc is not None:
+                    logger.error("Task exited with error: %s", exc)
         except Exception as e:
-            logger.error(f"Session error: {e}", exc_info=True)
+            logger.error("Session error: %s", e, exc_info=True)
+            end_reason["reason"] = "session_error"
         finally:
             if openai_ws:
                 try:
@@ -439,12 +488,18 @@ class RealtimeVoiceBridge:
                     pass
             if self.recorder:
                 self.recorder.stop_recording()
-            logger.info(f"Client session ended: {client_id}")
+            duration = time.monotonic() - start_time
+            reason = end_reason.get("reason", "unknown")
+            logger.info(
+                "Session ended: %s (duration: %.1fs, reason: %s)",
+                client_id, duration, reason,
+            )
 
     async def run(self) -> None:
         """Start WebSocket server and run forever."""
         logger.info(
-            f"Starting WebSocket server on ws://{self.websocket_host}:{self.websocket_port}/"
+            "Starting WebSocket server on ws://%s:%s/",
+            self.websocket_host, self.websocket_port,
         )
         async with websockets.serve(
             self.handle_client,
@@ -464,7 +519,7 @@ async def main() -> None:
     except KeyboardInterrupt:
         logger.info("Shutting down")
     except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
+        logger.error("Fatal error: %s", e, exc_info=True)
         sys.exit(1)
 
 

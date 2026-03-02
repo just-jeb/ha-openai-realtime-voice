@@ -203,7 +203,8 @@ async def test_audio_sender_paces_at_realtime_rate():
             send_times.append(asyncio.get_event_loop().time())
 
     audio_queue: asyncio.Queue = asyncio.Queue()
-    done = asyncio.Event()
+    first_audio_to_client = [False]
+    end_reason = {}
     fake_ws = FakeClientWs()
 
     total_bytes = BYTES_PER_SEC * 2  # 2 seconds of audio
@@ -216,16 +217,16 @@ async def test_audio_sender_paces_at_realtime_rate():
     await audio_queue.put(None)  # sentinel: flush
 
     sender_task = asyncio.create_task(
-        bridge._audio_sender(fake_ws, audio_queue, done)
+        bridge._audio_sender(fake_ws, audio_queue, first_audio_to_client, end_reason)
     )
 
-    # Wait for sender to finish (should take ~2 s); timeout at 4 s
+    # Wait for sender to deliver (~2 s); then cancel (sender runs until cancelled)
     await asyncio.sleep(3.5)
-    done.set()
+    sender_task.cancel()
     try:
-        await asyncio.wait_for(sender_task, timeout=1.0)
-    except asyncio.TimeoutError:
-        sender_task.cancel()
+        await sender_task
+    except asyncio.CancelledError:
+        pass
 
     total_sent = sum(len(c) for c in sent_chunks)
     assert total_sent == total_bytes, f"Expected {total_bytes} bytes sent, got {total_sent}"
@@ -259,7 +260,8 @@ async def test_audio_sender_flush_on_sentinel():
             sent_chunks.append(data)
 
     audio_queue: asyncio.Queue = asyncio.Queue()
-    done = asyncio.Event()
+    first_audio_to_client = [False]
+    end_reason = {}
 
     # Put a small chunk (less than SEND_CHUNK_SIZE) then sentinel
     small_chunk = b"\x00" * 500
@@ -267,14 +269,14 @@ async def test_audio_sender_flush_on_sentinel():
     await audio_queue.put(None)
 
     sender_task = asyncio.create_task(
-        bridge._audio_sender(FakeClientWs(), audio_queue, done)
+        bridge._audio_sender(FakeClientWs(), audio_queue, first_audio_to_client, end_reason)
     )
     await asyncio.sleep(0.5)
-    done.set()
+    sender_task.cancel()
     try:
-        await asyncio.wait_for(sender_task, timeout=1.0)
-    except asyncio.TimeoutError:
-        sender_task.cancel()
+        await sender_task
+    except asyncio.CancelledError:
+        pass
 
     total_sent = sum(len(c) for c in sent_chunks)
     assert total_sent == 500, f"Expected 500 bytes flushed, got {total_sent}"

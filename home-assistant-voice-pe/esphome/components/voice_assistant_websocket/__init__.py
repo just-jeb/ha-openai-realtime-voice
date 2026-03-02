@@ -16,6 +16,7 @@ VoiceAssistantWebSocket = voice_assistant_websocket_ns.class_(
 )
 
 CONF_SERVER_URL = "server_url"
+CONF_AUTO_STOP_TIMEOUT = "auto_stop_timeout"
 CONF_VOICE_ASSISTANT_WEBSOCKET = "voice_assistant_websocket"
 CONF_ON_CONNECTED = "on_connected"
 CONF_ON_DISCONNECTED = "on_disconnected"
@@ -28,6 +29,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Required(CONF_SERVER_URL): cv.string,
         cv.Optional(CONF_MICROPHONE): cv.use_id(microphone.Microphone),
         cv.Optional(CONF_SPEAKER): cv.use_id(speaker.Speaker),
+        cv.Optional(CONF_AUTO_STOP_TIMEOUT, default="20s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_ON_CONNECTED): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_DISCONNECTED): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_ERROR): automation.validate_automation(single=True),
@@ -53,7 +55,8 @@ async def to_code(config):
         )
     
     cg.add(var.set_server_url(config[CONF_SERVER_URL]))
-    
+    cg.add(var.set_auto_stop_timeout(config[CONF_AUTO_STOP_TIMEOUT]))
+
     if CONF_MICROPHONE in config:
         mic = await cg.get_variable(config[CONF_MICROPHONE])
         cg.add(var.set_microphone(mic))

@@ -23,11 +23,10 @@ own output from being picked up by the mic and causing echo/feedback
 loops. Hardware AEC handles some of this, but blocking at the source is
 more reliable.
 
-**Auto-stop on inactivity.** If no speaker audio is received for 20
-seconds, the session auto-stops. This is tracked by speaker output only,
-not mic input, because the mic always picks up ambient noise. The timeout
-means: if the user stops talking and the bot has nothing to say, the
-session ends cleanly.
+**Auto-stop on inactivity.** If no speaker audio is received for the
+configured timeout (default 20s, configurable via `auto_stop_timeout` in
+YAML), the session auto-stops. This is tracked by speaker output only,
+not mic input, because the mic always picks up ambient noise.
 
 **Interrupt via wake word.** If the bot is speaking and the user says
 a wake word, the client sends `{"type":"interrupt"}` and clears its
@@ -40,6 +39,17 @@ a fresh start). This is the wake word's dual role: start OR interrupt.
 for the server. Received 24kHz audio is passed to ESPHome's resampler
 speaker which converts to 48kHz for the I2S hardware. The C++ component
 does not handle output resampling — ESPHome's speaker pipeline does.
+
+**No reconnection.** If the connection drops (network, server restart,
+etc.), the component goes to IDLE. The user says the wake word again to
+start a fresh session. This keeps the lifecycle simple and avoids
+watchdog/state bugs from blocking teardown.
+
+**Single off switch.** Every path that ends the session (button press,
+disconnect message from server, WebSocket disconnect/error, auto-stop
+timeout) calls the same `stop(reason)`. State is IDLE immediately;
+WebSocket teardown runs in a background FreeRTOS task so the main loop
+never blocks. Logs include the stop reason for diagnostics.
 
 **Component is pulled from git.** The `voice_assistant_websocket`
 component is referenced via git URL in `external_components`, not as a
@@ -70,11 +80,12 @@ The `voice_assistant_websocket` component lives under
 - `.esphome_component.yml` — Component metadata and git source (referenced from `voice_pe_config.yaml` external_components).
 - `__init__.py` — ESPHome config schema, actions (`start`, `stop`,
   `interrupt`), conditions (`is_running`, `is_connected`,
-  `is_bot_speaking`). This is the ESPHome integration glue.
-- `.h` — State enum, class declaration, constants, action/condition
-  template classes.
-- `.cpp` — WebSocket lifecycle, audio processing, resampling,
-  event handling.
+  `is_bot_speaking`), optional `auto_stop_timeout`. This is the ESPHome
+  integration glue.
+- `.h` — State enum (IDLE, STARTING, RUNNING), class declaration,
+  constants, action/condition template classes.
+- `.cpp` — WebSocket lifecycle, audio processing, resampling, event
+  handling, background cleanup task, finite send timeouts (no blocking).
 
 When adding a new action or condition, it must be registered in
 `__init__.py`, `.h`, and `.cpp`.
