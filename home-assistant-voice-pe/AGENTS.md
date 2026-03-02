@@ -77,7 +77,7 @@ The `voice_assistant_websocket` component lives under
   event handling.
 
 When adding a new action or condition, it must be registered in
-`__init__.py`, `.h`, and `.cpp`. The `voice_assistant_webrtc` directory in the same tree is metadata-only (no implementation); all runtime use is WebSocket.
+`__init__.py`, `.h`, and `.cpp`.
 
 ## Keeping This Doc Current
 

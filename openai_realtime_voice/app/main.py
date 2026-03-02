@@ -322,7 +322,7 @@ class RealtimeVoiceBridge:
                         return part.get("text", "")
         return "No result from web search."
 
-    async def handle_client(self, client_ws, path: str) -> None:
+    async def handle_client(self, client_ws) -> None:
         """One client connection = one OpenAI session. Always."""
         client_id = self._client_id_from_ws(client_ws)
         logger.info(f"Client connected: {client_id}")

@@ -496,10 +496,11 @@ light:
               brightness_step = 0;
               brightness_increasing = true;
             }
-            // Blue color (0, 0, 255)
-            Color blue(0, 0, 255);
+            auto light_color = id(led_ring).current_values;
+            Color color(light_color.get_red() * 255, light_color.get_green() * 255,
+                  light_color.get_blue() * 255);
             uint8_t brightness = (brightness_step * 255) / brightness_steps;
-            Color pulse_color = blue * brightness;
+            Color pulse_color = color * brightness;
             for (uint8_t i = 0; i < 12; i++) {
               it[i] = pulse_color;
             }
@@ -560,17 +561,6 @@ light:
             if (brightness_step == 0 || brightness_step == brightness_step_number) {
               brightness_decreasing = !brightness_decreasing;
             }
-      - addressable_lambda:
-          name: "Voice kit startup failed"
-          lambda: |-
-            Color fail_color(255, 0, 0);
-            for (uint8_t i = 0; i < 12; i++) {
-              if (i % 3) {
-                it[i] = Color::BLACK;
-              } else {
-                it[i] = fail_color;
-              }
-            }
       - addressable_twinkle:
           name: "Twinkle"
           twinkle_probability: 50%
@@ -586,9 +576,9 @@ light:
     initial_state:
       color_mode: rgb
       brightness: 66%
-      red: 9.4%
-      green: 73.3%
-      blue: 94.9%
+      red: 100%
+      green: 100%
+      blue: 100%
     segments:
       - id: leds_internal
         from: 7
@@ -716,7 +706,7 @@ script:
           effect: "Twinkle"
 
   # Script executed when the voice assistant is idle
-  # If voice assistant is running AND connected, show blue pulse; otherwise turn off
+  # If voice assistant is running AND connected, show white pulse; otherwise turn off
   - id: control_leds_voice_assistant_idle_phase
     then:
       - if:
@@ -727,11 +717,11 @@ script:
               - voice_assistant_websocket.is_connected:
                   id: voice_assistant_ws
           then:
-            # Voice assistant is active and connected - show blue pulse
+            # Voice assistant is active and connected - show white pulse
             - light.turn_on:
                 brightness: 66%
-                red: 0%
-                green: 0%
+                red: 100%
+                green: 100%
                 blue: 100%
                 id: voice_assistant_leds
                 effect: "Active Pulse"
@@ -749,6 +739,9 @@ script:
     then:
       - light.turn_on:
           brightness: !lambda return max( id(led_ring).current_values.get_brightness() , 0.2f );
+          red: 0%
+          green: 0%
+          blue: 100%
           id: voice_assistant_leds
           effect: "Waiting for Command"
 
@@ -757,6 +750,9 @@ script:
     then:
       - light.turn_on:
           brightness: !lambda return max( id(led_ring).current_values.get_brightness() , 0.2f );
+          red: 0%
+          green: 0%
+          blue: 100%
           id: voice_assistant_leds
           effect: "Listening For Command"
 
@@ -765,6 +761,9 @@ script:
     then:
       - light.turn_on:
           brightness: !lambda return max( id(led_ring).current_values.get_brightness() , 0.2f );
+          red: 0%
+          green: 0%
+          blue: 100%
           id: voice_assistant_leds
           effect: "Thinking"
 
@@ -773,6 +772,9 @@ script:
     then:
       - light.turn_on:
           brightness: !lambda return max( id(led_ring).current_values.get_brightness() , 0.2f );
+          red: 0%
+          green: 0%
+          blue: 100%
           id: voice_assistant_leds
           effect: "Replying"
 
@@ -787,17 +789,6 @@ script:
           id: voice_assistant_leds
           effect: "Error"
 
-  # Script executed if voice_kit startup failed
-  - id: control_leds_voice_kit_startup_failed
-    then:
-      - light.turn_on:
-          brightness: 40%
-          red: 0%
-          green: 0%
-          blue: 0%
-          id: voice_assistant_leds
-          effect: "Voice kit startup failed"
-
   # Script executed when the voice assistant is muted or silent
   - id: control_leds_muted_or_silent
     then:
@@ -811,9 +802,9 @@ script:
     then:
       - light.turn_on:
           brightness: 66%
-          red: 1
-          green: 0
-          blue: 0
+          red: 100%
+          green: 100%
+          blue: 100%
           id: voice_assistant_leds
           effect: "Twinkle"
 

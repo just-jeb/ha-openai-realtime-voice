@@ -1,5 +1,6 @@
 name: Build and Publish Home Assistant Addon
 
+# Run on every push to main/master when addon or this workflow changes
 on:
   push:
     branches:

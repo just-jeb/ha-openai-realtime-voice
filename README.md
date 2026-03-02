@@ -47,10 +47,6 @@ Voice interface for Home Assistant using the OpenAI Realtime API for low-latency
 1. Install and configure the addon (see server README). Required: `openai_api_key`. Optional: `web_search_api_key` for web search.
 2. Build and flash the ESP32 with the client config (see client README). Set `server_url` in secrets to your addon WebSocket URL (e.g. `ws://homeassistant.local:8080`).
 
-## Known issues
-
-- **WebRTC:** The `voice_assistant_webrtc` component is metadata only; everything uses WebSocket.
-
 ## Acknowledgments
 
 The client firmware and WebSocket component in this repo were forked from [fjfricke/ha-openai-realtime](https://github.com/fjfricke/ha-openai-realtime) (Felix Fricke), which in turn builds on [esphome/home-assistant-voice-pe](https://github.com/esphome/home-assistant-voice-pe). Thanks to both for the Voice PE integration and the bridge idea.
