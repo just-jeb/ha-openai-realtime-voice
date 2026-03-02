@@ -28,7 +28,7 @@ ESP32 Voice PE                    Addon
 - **Audio:** 24 kHz, 16-bit, mono PCM. Device binary frames are base64-encoded and sent as `input_audio_buffer.append`; `response.audio.delta` is base64-decoded and sent as binary to the device.
 - **Interrupt:** Device sends `{"type":"interrupt"}`; server sends `response.cancel` to OpenAI.
 - **Disconnect:** When the user says goodbye, OpenAI calls `disconnect_client`; server sends `{"type":"disconnect"}` to the device, returns from the handler so the task ends, and the cancellation cascade closes both WebSockets.
-- **Web search:** The `search_web` tool calls the OpenAI Responses API (`web_search_preview`) using `WEB_SEARCH_API_KEY` or `OPENAI_API_KEY`.
+- **Web search:** The `search_web` tool calls the OpenAI Responses API (GA `web_search` tool, `gpt-5-nano` model) using `WEB_SEARCH_API_KEY` or `OPENAI_API_KEY`. The key must have **Responses (Write)** permission in the OpenAI dashboard.
 
 ## Design decisions
 
@@ -38,11 +38,11 @@ ESP32 Voice PE                    Addon
 
 ## Config options
 
-- `openai_api_key` — Required. Realtime API (and Responses API if `web_search_api_key` is unset).
+- `openai_api_key` — Required. Must have **Realtime (Request)** permission. Also used for web search if `web_search_api_key` is unset, in which case it must also have **Responses (Write)**.
 - `websocket_port` — Default 8080.
 - `vad_threshold`, `vad_prefix_padding_ms`, `vad_silence_duration_ms` — Server-side VAD.
 - `instructions` — System prompt for the model.
-- `web_search_api_key` — Optional; if empty, `openai_api_key` is used for web search.
+- `web_search_api_key` — Optional; if empty (or whitespace-only), `openai_api_key` is used for web search. Must have **Responses (Write)** permission. A 401 on web search means the key lacks this permission.
 - `enable_recording` — If true, WAVs written under `recordings/` via `app/audio_recorder.py`.
 
 ## Adding a tool

@@ -90,6 +90,18 @@ The `voice_assistant_websocket` component lives under
 When adding a new action or condition, it must be registered in
 `__init__.py`, `.h`, and `.cpp`.
 
+## ESPHome API and Reboot Behavior
+
+The config includes `api:` with an encryption key for HA integration.
+`reboot_timeout: 0s` is set to prevent ESPHome from rebooting when no
+HA client connects (default behavior is reboot after ~5–15 min). This
+is necessary when the device is used primarily for voice via the addon
+and HA may not connect to the native API.
+
+If HA never connects (red LEDs, `[E][api:129]: No clients; rebooting`):
+- Check device adoption in HA, encryption key match, and that HA is running.
+- `reboot_timeout: 0s` prevents the reboot but LEDs will stay red until HA connects.
+
 ## Keeping This Doc Current
 
 Update this file when:

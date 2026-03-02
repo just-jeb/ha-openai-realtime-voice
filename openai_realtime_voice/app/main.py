@@ -75,7 +75,7 @@ class RealtimeVoiceBridge:
 
     def __init__(self) -> None:
         self.openai_api_key = os.environ.get("OPENAI_API_KEY", "")
-        self.web_search_api_key = os.environ.get("WEB_SEARCH_API_KEY", "") or self.openai_api_key
+        self.web_search_api_key = (os.environ.get("WEB_SEARCH_API_KEY") or "").strip() or self.openai_api_key
         self.websocket_host = os.environ.get("WEBSOCKET_HOST", "0.0.0.0")
         self.websocket_port = int(os.environ.get("WEBSOCKET_PORT", "8080"))
         self.instructions = os.environ.get(
@@ -410,9 +410,9 @@ class RealtimeVoiceBridge:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "gpt-4.1-mini",
+                    "model": "gpt-5-nano",
                     "input": query,
-                    "tools": [{"type": "web_search_preview"}],
+                    "tools": [{"type": "web_search"}],
                 },
                 timeout=30.0,
             )

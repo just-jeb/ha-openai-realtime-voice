@@ -27,13 +27,13 @@ In **Supervisor** → **OpenAI Realtime Voice** → **Configuration**:
 
 **Required**
 
-- `openai_api_key`: OpenAI API key (used for Realtime and, if set below, for web search)
+- `openai_api_key`: OpenAI API key with **Realtime (Request)** permission. Also used for web search when `web_search_api_key` is empty, in which case it must also have **Responses (Write)**.
 
 **Optional**
 
 - `websocket_port`: WebSocket port (default `8080`)
 - `instructions`: System prompt for the model (e.g. language, tone, length of answers)
-- `web_search_api_key`: API key for Responses API web search; if empty, `openai_api_key` is used
+- `web_search_api_key`: API key for Responses API web search; must have **Responses (Write)** permission. If empty, `openai_api_key` is used.
 - `vad_threshold`, `vad_prefix_padding_ms`, `vad_silence_duration_ms`: Voice activity detection
 - `enable_recording`: Set to `true` to record input/output WAVs under `recordings/` (debug only)
 
@@ -52,3 +52,4 @@ Then start the addon.
 - **Device won’t connect:** Check `server_url` on the device (e.g. `ws://homeassistant.local:8080`) and that the addon is running and the port is open.
 - **No speech / one-sided audio:** Check addon logs and device logs; confirm mic/speaker and format (24 kHz, 16-bit mono).
 - **Web search not used:** Ensure `instructions` tell the model it can search the web when needed; optionally set `web_search_api_key` if you use a separate key.
+- **Web search returns 401:** The API key used for web search (either `web_search_api_key` or `openai_api_key`) must have **Responses (Write)** permission in the OpenAI dashboard.
