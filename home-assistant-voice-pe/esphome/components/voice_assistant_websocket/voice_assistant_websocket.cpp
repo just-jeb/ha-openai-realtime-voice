@@ -17,6 +17,7 @@ namespace esphome {
 namespace voice_assistant_websocket {
 
 void VoiceAssistantWebSocket::websocket_cleanup_task_(void *arg) {
+  uint32_t t0 = xTaskGetTickCount();
   ESP_LOGI(TAG, "Background WS cleanup started");
   esp_websocket_client_handle_t handle = static_cast<esp_websocket_client_handle_t>(arg);
   if (esp_websocket_client_is_connected(handle)) {
@@ -24,6 +25,8 @@ void VoiceAssistantWebSocket::websocket_cleanup_task_(void *arg) {
   }
   esp_websocket_client_stop(handle);
   esp_websocket_client_destroy(handle);
+  uint32_t elapsed = (xTaskGetTickCount() - t0) * portTICK_PERIOD_MS;
+  ESP_LOGI(TAG, "[diag] cleanup finished in %ums", (unsigned) elapsed);
   ESP_LOGI(TAG, "Background WS cleanup finished");
   vTaskDelete(nullptr);
 }
@@ -107,6 +110,8 @@ void VoiceAssistantWebSocket::start() {
   this->connection_count_++;
   this->connect_millis_ = 0;
   this->audio_chunks_sent_ = 0;
+  ESP_LOGI(TAG, "[diag] start conn #%u heap=%u", (unsigned) this->connection_count_,
+           (unsigned) esp_get_free_heap_size());
 
   ESP_LOGI(TAG, "Starting voice assistant...");
   this->state_ = VOICE_ASSISTANT_WEBSOCKET_STARTING;
@@ -248,6 +253,11 @@ void VoiceAssistantWebSocket::send_audio_chunk_(const uint8_t *data, size_t len)
                                           len,
                                           pdMS_TO_TICKS(SEND_AUDIO_TIMEOUT_MS));
   this->audio_chunks_sent_++;
+  if (this->audio_chunks_sent_ <= 3) {
+    ESP_LOGI(TAG, "[diag] send #%u ret=%d +%ums",
+             (unsigned) this->audio_chunks_sent_, sent,
+             this->connect_millis_ ? (unsigned) (millis() - this->connect_millis_) : 0u);
+  }
   if (sent < 0) {
     ESP_LOGW(TAG, "Send timeout (%ums), dropping audio chunk", (unsigned) SEND_AUDIO_TIMEOUT_MS);
     return;
@@ -452,6 +462,9 @@ void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t e
     case WEBSOCKET_EVENT_CONNECTED:
       this->connect_millis_ = millis();
       ESP_LOGI(TAG, "WebSocket connected, state: RUNNING");
+      ESP_LOGI(TAG, "[diag] connected conn #%u heap=%u",
+               (unsigned) this->connection_count_,
+               (unsigned) esp_get_free_heap_size());
       this->state_ = VOICE_ASSISTANT_WEBSOCKET_RUNNING;
       if (this->state_callback_) {
         this->state_callback_(this->state_);
@@ -489,6 +502,13 @@ void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t e
         ESP_LOGE(TAG, "WebSocket error - Type: %d, Socket errno: %d",
                  event_data->error_handle.error_type,
                  event_data->error_handle.esp_transport_sock_errno);
+        ESP_LOGE(TAG, "[diag] error conn #%u +%ums type=%d errno=%d chunks_sent=%u heap=%u",
+                 (unsigned) this->connection_count_,
+                 this->connect_millis_ ? (unsigned) (millis() - this->connect_millis_) : 0u,
+                 event_data->error_handle.error_type,
+                 event_data->error_handle.esp_transport_sock_errno,
+                 (unsigned) this->audio_chunks_sent_,
+                 (unsigned) esp_get_free_heap_size());
       } else {
         ESP_LOGE(TAG, "WebSocket error (no event data)");
       }

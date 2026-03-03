@@ -170,6 +170,8 @@ class RealtimeVoiceBridge:
                         continue
                     openai_ws = openai_ws_holder[0]
                     # Flush buffered audio first (only once when OpenAI becomes ready)
+                    if audio_buffer:
+                        logger.info("[diag] Flushing %d buffered chunks to OpenAI", len(audio_buffer))
                     for buffered in audio_buffer:
                         b64 = base64.standard_b64encode(buffered).decode("ascii")
                         await openai_ws.send(
@@ -475,10 +477,13 @@ class RealtimeVoiceBridge:
 
         async def setup_openai() -> None:
             try:
+                logger.info("[diag] %s: OpenAI connect starting", client_id)
+                t0 = time.monotonic()
                 ws = await self._connect_openai()
                 await self._configure_session(ws)
                 openai_ws_holder[0] = ws
                 openai_ready.set()
+                logger.info("[diag] %s: OpenAI ready in %.3fs", client_id, time.monotonic() - t0)
             except Exception as e:
                 logger.error("OpenAI setup failed: %s", e, exc_info=True)
                 end_reason["reason"] = "openai_setup_error"
@@ -496,6 +501,8 @@ class RealtimeVoiceBridge:
         try:
             await setup_task
             openai_ws = openai_ws_holder[0]
+            logger.info("[diag] %s: forwarding tasks starting (+%.3fs since client connect)",
+                        client_id, time.monotonic() - start_time)
             if openai_ws is None:
                 client_task.cancel()
                 try:
@@ -557,6 +564,8 @@ class RealtimeVoiceBridge:
                 "Session ended: %s (duration: %.1fs, reason: %s)",
                 client_id, duration, reason,
             )
+            logger.info("[diag] %s: session end reason=%s duration=%.1fs",
+                        client_id, reason, duration)
 
     async def run(self) -> None:
         """Start WebSocket server and run forever."""
