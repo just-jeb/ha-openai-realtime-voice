@@ -34,6 +34,18 @@ logging.getLogger("websockets").setLevel(logging.WARNING)
 
 dotenv.load_dotenv()
 
+# #region agent log
+_DBG_PATH = "/Users/jeb/projects/ha-openai-realtime-voice/.cursor/debug-47ae00.log"
+def _dbg(hyp, loc, msg, data=None):
+    entry = json.dumps({"sessionId":"47ae00","hypothesisId":hyp,"location":loc,"message":msg,"data":data or {},"timestamp":int(time.time()*1000)})
+    logger.info("[DBG-47ae00][%s] %s: %s %r", hyp, loc, msg, data or {})
+    try:
+        with open(_DBG_PATH, "a") as f:
+            f.write(entry + "\n")
+    except Exception:
+        pass
+# #endregion
+
 # Contract: 24kHz, 16-bit, mono PCM (both directions)
 SAMPLE_RATE = 24000
 BYTES_PER_SEC = SAMPLE_RATE * 2  # 16-bit = 2 bytes per sample → 48 000 B/s
@@ -181,8 +193,17 @@ class RealtimeVoiceBridge:
     ) -> None:
         """Forward ESP32 binary audio and JSON control to OpenAI. Client only sends audio
         after receiving ready, so openai_ws is always valid here."""
+        # #region agent log
+        _dbg("H1", "c2o:entry", "task_started", {"client_id": client_id})
+        # #endregion
+        msg_count = 0
         try:
             async for message in client_ws:
+                # #region agent log
+                msg_count += 1
+                if msg_count <= 3:
+                    _dbg("H1", "c2o:msg", "received", {"n": msg_count, "type": "bin" if isinstance(message, bytes) else "txt", "len": len(message)})
+                # #endregion
                 if isinstance(message, bytes):
                     if not first_audio_from_client[0]:
                         first_audio_from_client[0] = True
@@ -205,12 +226,21 @@ class RealtimeVoiceBridge:
                     except (json.JSONDecodeError, TypeError):
                         pass
         except websockets.exceptions.ConnectionClosed as e:
+            # #region agent log
+            _dbg("H1", "c2o:closed", "connection_closed", {"code": e.code, "msgs_received": msg_count})
+            # #endregion
             end_reason["reason"] = "client_disconnected"
             end_reason["code"] = e.code
             logger.info("client_to_openai ended (reason: connection_closed, code: %s)", e.code)
         except asyncio.CancelledError:
+            # #region agent log
+            _dbg("H3", "c2o:cancelled", "task_cancelled", {"msgs_received": msg_count})
+            # #endregion
             raise
         except Exception as e:
+            # #region agent log
+            _dbg("H1", "c2o:error", "unexpected_error", {"error": str(e), "msgs_received": msg_count})
+            # #endregion
             logger.error("Error in client_to_openai: %s", e, exc_info=True)
             end_reason["reason"] = "client_to_openai_error"
         finally:
@@ -236,6 +266,9 @@ class RealtimeVoiceBridge:
     ) -> None:
         """Forward OpenAI events to ESP32; audio goes through paced queue. Sends phase
         messages (thinking/replying/listening) for client LED feedback."""
+        # #region agent log
+        _dbg("H3", "o2c:entry", "task_started", {"client_id": client_id})
+        # #endregion
         delta_count = 0
         delta_bytes_total = 0
         sent_replying_phase = False
@@ -592,10 +625,21 @@ class RealtimeVoiceBridge:
                 )
             )
 
+            # #region agent log
+            _dbg("H2", "handle:pre_wait", "all_tasks_created")
+            # #endregion
+
             finished, pending = await asyncio.wait(
                 [client_task, openai_task, sender_task],
                 return_when=asyncio.FIRST_COMPLETED,
             )
+
+            # #region agent log
+            task_names = {id(client_task): "client_to_openai", id(openai_task): "openai_to_client", id(sender_task): "audio_sender"}
+            fin = [task_names.get(id(t), "?") for t in finished]
+            pend = [task_names.get(id(t), "?") for t in pending]
+            _dbg("H3", "handle:post_wait", "first_task_done", {"finished": fin, "pending": pend})
+            # #endregion
 
             for task in pending:
                 task.cancel()
