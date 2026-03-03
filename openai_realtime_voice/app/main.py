@@ -137,6 +137,27 @@ class RealtimeVoiceBridge:
         logger.info("Connected to OpenAI Realtime API")
         return ws
 
+    async def _wait_for_event(self, openai_ws, expected_type: str, timeout: float = 5.0):
+        """Read OpenAI events until the expected type arrives. Returns the event."""
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError(f"Timed out waiting for {expected_type}")
+            raw = await asyncio.wait_for(openai_ws.recv(), timeout=remaining)
+            if isinstance(raw, str):
+                event = json.loads(raw)
+                ev_type = event.get("type")
+                logger.info("OpenAI setup event: %s", ev_type)
+                if ev_type == "error":
+                    logger.error("OpenAI error during setup: %s", event)
+                    raise RuntimeError(
+                        f"OpenAI error: {event.get('error', {}).get('message', event)}"
+                    )
+                if ev_type == expected_type:
+                    return event
+
     async def _configure_session(self, openai_ws) -> None:
         """Send session.update so the model is ready for audio."""
         event = self._session_config()
@@ -299,6 +320,8 @@ class RealtimeVoiceBridge:
                     await self._send_phase(client_ws, "thinking")
                 elif ev_type == "input_audio_buffer.committed":
                     logger.info("OpenAI audio buffer committed")
+                else:
+                    logger.debug("Unhandled OpenAI event: %s", ev_type)
         except websockets.exceptions.ConnectionClosed as e:
             end_reason["reason"] = "openai_disconnected"
             end_reason["code"] = e.code
@@ -537,7 +560,9 @@ class RealtimeVoiceBridge:
 
         try:
             openai_ws = await self._connect_openai()
+            await self._wait_for_event(openai_ws, "session.created")
             await self._configure_session(openai_ws)
+            await self._wait_for_event(openai_ws, "session.updated")
             await client_ws.send(json.dumps({"type": "ready"}))
             logger.info("Sent ready signal to client")
 
@@ -578,6 +603,8 @@ class RealtimeVoiceBridge:
                 await asyncio.gather(*pending, return_exceptions=True)
 
             for task in finished:
+                if task.cancelled():
+                    continue
                 exc = task.exception()
                 if exc is not None:
                     logger.error("Task exited with error: %s", exc)
