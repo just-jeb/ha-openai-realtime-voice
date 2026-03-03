@@ -35,6 +35,10 @@ ESP32 Voice PE                    Addon
 - **No MCP.** Smart home is intended as a separate, local HA voice pipeline (e.g. different wake word). This addon is for voice Q&A and web search only.
 - **Realtime API GA.** The addon uses the GA interface (no beta header); session config uses GA shape (`audio.input`/`audio.output`, `type: "realtime"`); server events are `response.output_audio.delta` / `response.output_audio.done`.
 - **Two tools:** `disconnect_client` and `search_web`, both in `main.py`. `disconnect_client` is handled synchronously in `_handle_tool_call` (ends session). Other tools (e.g. `search_web`) run in the background via `_run_tool_in_background` so the event loop stays responsive and the model can acknowledge the user while a tool is pending.
+- **Async function calling (GA):** The Realtime API supports the model continuing the conversation while a tool is pending (user can ask "how much longer?" and the model responds). The model does NOT reliably speak before calling tools regardless of instructions; instruction-based pre-acknowledgment was tested and failed. See [developer blog](https://developers.openai.com/blog/realtime-api).
+- **Searching phase:** When a background tool is dispatched, the server sends `{"type":"phase","phase":"searching"}`. After each `response.output_audio.done`, the server sends `searching` if `pending_tool_tasks` is non-empty, else `listening`. The client uses this to show a distinct state (blue-green LEDs) and a 60s auto-stop timeout so long searches don't kill the session.
+- **Stale tool results:** When the user moves on before a search completes, the old result may still be sent and the model may read it back ("answered twice"). Deferred; cancelling on speech would break the "how much longer?" use case.
+- **Web search:** Responses API with `web_search` typically takes 12–22s; httpx timeout is 45s. `response_idle` prevents sending tool results while the model is mid-speech.
 - **Config:** HA Addon UI → `config.yaml` → `run.sh` (bashio) → env vars → `main.py`. No config file parsing in Python.
 
 ## Config options

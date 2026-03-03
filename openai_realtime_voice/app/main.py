@@ -34,18 +34,6 @@ logging.getLogger("websockets").setLevel(logging.WARNING)
 
 dotenv.load_dotenv()
 
-# #region agent log
-_DBG_PATH = "/Users/jeb/projects/ha-openai-realtime-voice/.cursor/debug-47ae00.log"
-def _dbg(hyp, loc, msg, data=None):
-    entry = json.dumps({"sessionId":"47ae00","hypothesisId":hyp,"location":loc,"message":msg,"data":data or {},"timestamp":int(time.time()*1000)})
-    logger.info("[DBG-47ae00][%s] %s: %s %r", hyp, loc, msg, data or {})
-    try:
-        with open(_DBG_PATH, "a") as f:
-            f.write(entry + "\n")
-    except Exception:
-        pass
-# #endregion
-
 # Contract: 24kHz, 16-bit, mono PCM (both directions)
 SAMPLE_RATE = 24000
 BYTES_PER_SEC = SAMPLE_RATE * 2  # 16-bit = 2 bytes per sample → 48 000 B/s
@@ -193,17 +181,8 @@ class RealtimeVoiceBridge:
     ) -> None:
         """Forward ESP32 binary audio and JSON control to OpenAI. Client only sends audio
         after receiving ready, so openai_ws is always valid here."""
-        # #region agent log
-        _dbg("H1", "c2o:entry", "task_started", {"client_id": client_id})
-        # #endregion
-        msg_count = 0
         try:
             async for message in client_ws:
-                # #region agent log
-                msg_count += 1
-                if msg_count <= 3:
-                    _dbg("H1", "c2o:msg", "received", {"n": msg_count, "type": "bin" if isinstance(message, bytes) else "txt", "len": len(message)})
-                # #endregion
                 if isinstance(message, bytes):
                     if not first_audio_from_client[0]:
                         first_audio_from_client[0] = True
@@ -226,21 +205,12 @@ class RealtimeVoiceBridge:
                     except (json.JSONDecodeError, TypeError):
                         pass
         except websockets.exceptions.ConnectionClosed as e:
-            # #region agent log
-            _dbg("H1", "c2o:closed", "connection_closed", {"code": e.code, "msgs_received": msg_count})
-            # #endregion
             end_reason["reason"] = "client_disconnected"
             end_reason["code"] = e.code
             logger.info("client_to_openai ended (reason: connection_closed, code: %s)", e.code)
         except asyncio.CancelledError:
-            # #region agent log
-            _dbg("H3", "c2o:cancelled", "task_cancelled", {"msgs_received": msg_count})
-            # #endregion
             raise
         except Exception as e:
-            # #region agent log
-            _dbg("H1", "c2o:error", "unexpected_error", {"error": str(e), "msgs_received": msg_count})
-            # #endregion
             logger.error("Error in client_to_openai: %s", e, exc_info=True)
             end_reason["reason"] = "client_to_openai_error"
         finally:
@@ -265,10 +235,7 @@ class RealtimeVoiceBridge:
         pending_tool_tasks: set,
     ) -> None:
         """Forward OpenAI events to ESP32; audio goes through paced queue. Sends phase
-        messages (thinking/replying/listening) for client LED feedback."""
-        # #region agent log
-        _dbg("H3", "o2c:entry", "task_started", {"client_id": client_id})
-        # #endregion
+        messages (thinking/replying/listening/searching) for client LED feedback."""
         delta_count = 0
         delta_bytes_total = 0
         sent_replying_phase = False
@@ -298,11 +265,12 @@ class RealtimeVoiceBridge:
                 elif ev_type == "response.output_audio.done":
                     await audio_queue.put(None)
                     sent_replying_phase = False
-                    await self._send_phase(client_ws, "listening")
+                    phase = "searching" if pending_tool_tasks else "listening"
+                    await self._send_phase(client_ws, phase)
                     duration_s = delta_bytes_total / BYTES_PER_SEC if delta_bytes_total else 0
                     logger.info(
-                        "Response audio complete: %d deltas, %d bytes (%.1f s)",
-                        delta_count, delta_bytes_total, duration_s,
+                        "Response audio complete: %d deltas, %d bytes (%.1f s) -> phase=%s",
+                        delta_count, delta_bytes_total, duration_s, phase,
                     )
                     delta_count = 0
                     delta_bytes_total = 0
@@ -322,6 +290,12 @@ class RealtimeVoiceBridge:
                             response.get("status_details"),
                         )
                     output = response.get("output", [])
+                    output_summary = [
+                        item.get("type") + (f"({item.get('name', '')})" if item.get("type") == "function_call" else "")
+                        for item in output
+                    ]
+                    if output_summary:
+                        logger.info("Response output: %s", output_summary)
                     for item in output:
                         if item.get("type") == "function_call":
                             if item.get("name") == "disconnect_client":
@@ -332,6 +306,7 @@ class RealtimeVoiceBridge:
                                     end_reason["reason"] = "disconnect_tool"
                                     return
                             else:
+                                await self._send_phase(client_ws, "searching")
                                 task = asyncio.create_task(
                                     self._run_tool_in_background(
                                         openai_ws, item, response_idle
@@ -475,26 +450,6 @@ class RealtimeVoiceBridge:
                 pass
             return True
 
-        if name == "search_web":
-            query = args.get("query", "")
-            if not query:
-                await self._send_tool_result(
-                    openai_ws, call_id, json.dumps({"error": "Missing query"})
-                )
-                return False
-            try:
-                text = await self._web_search(query)
-                await self._send_tool_result(openai_ws, call_id, json.dumps({"result": text}))
-            except Exception as e:
-                logger.warning("Web search failed: %s", e)
-                await self._send_tool_result(
-                    openai_ws, call_id, json.dumps({"error": str(e)})
-                )
-            return False
-
-        await self._send_tool_result(
-            openai_ws, call_id, json.dumps({"error": f"Unknown tool: {name}"})
-        )
         return False
 
     async def _run_tool_in_background(
@@ -516,22 +471,38 @@ class RealtimeVoiceBridge:
         except json.JSONDecodeError:
             args = {}
 
+        logger.info("Tool call: name=%s args=%s", name, args)
+
         output: str
         if name == "search_web":
             query = args.get("query", "")
             if not query:
                 output = json.dumps({"error": "Missing query"})
+                logger.warning("search_web called with empty query")
             else:
+                search_start = time.monotonic()
                 try:
                     text = await self._web_search(query)
+                    duration_s = time.monotonic() - search_start
                     output = json.dumps({"result": text})
+                    logger.info("Web search completed in %.1fs, result %d chars", duration_s, len(text))
                 except Exception as e:
-                    logger.warning("Web search failed: %s", e)
-                    output = json.dumps({"error": str(e)})
+                    duration_s = time.monotonic() - search_start
+                    err_msg = f"{type(e).__name__}: {e!s}" if str(e) else type(e).__name__
+                    if isinstance(e, httpx.HTTPStatusError):
+                        try:
+                            body = e.response.text
+                            err_msg = f"{err_msg} body=%s" % (body[:200] + "…" if len(body) > 200 else body)
+                        except Exception:
+                            pass
+                    logger.warning("Web search failed after %.1fs: %s", duration_s, err_msg, exc_info=True)
+                    output = json.dumps({"error": str(e) or type(e).__name__})
         else:
             output = json.dumps({"error": f"Unknown tool: {name}"})
 
         await response_idle.wait()
+        result_preview = "ok" if "error" not in output else "error"
+        logger.info("Sending tool result: call_id=%s %s", call_id[:16] + "…" if len(call_id) > 16 else call_id, result_preview)
         await self._send_tool_result(openai_ws, call_id, output)
 
     async def _send_tool_result(self, openai_ws, call_id: str, output: str) -> None:
@@ -562,7 +533,7 @@ class RealtimeVoiceBridge:
                     "input": query,
                     "tools": [{"type": "web_search"}],
                 },
-                timeout=30.0,
+                timeout=45.0,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -596,6 +567,8 @@ class RealtimeVoiceBridge:
             await self._wait_for_event(openai_ws, "session.created")
             await self._configure_session(openai_ws)
             await self._wait_for_event(openai_ws, "session.updated")
+            instructions_preview = (self.instructions[:100] + "…") if len(self.instructions) > 100 else self.instructions
+            logger.info("Instructions: %s", instructions_preview)
             await client_ws.send(json.dumps({"type": "ready"}))
             logger.info("Sent ready signal to client")
 
@@ -625,21 +598,10 @@ class RealtimeVoiceBridge:
                 )
             )
 
-            # #region agent log
-            _dbg("H2", "handle:pre_wait", "all_tasks_created")
-            # #endregion
-
             finished, pending = await asyncio.wait(
                 [client_task, openai_task, sender_task],
                 return_when=asyncio.FIRST_COMPLETED,
             )
-
-            # #region agent log
-            task_names = {id(client_task): "client_to_openai", id(openai_task): "openai_to_client", id(sender_task): "audio_sender"}
-            fin = [task_names.get(id(t), "?") for t in finished]
-            pend = [task_names.get(id(t), "?") for t in pending]
-            _dbg("H3", "handle:post_wait", "first_task_done", {"finished": fin, "pending": pend})
-            # #endregion
 
             for task in pending:
                 task.cancel()

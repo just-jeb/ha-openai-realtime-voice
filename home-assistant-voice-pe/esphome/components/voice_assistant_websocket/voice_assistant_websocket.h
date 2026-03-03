@@ -59,8 +59,9 @@ class VoiceAssistantWebSocket : public Component {
   Trigger<> *get_thinking_trigger() { return &this->thinking_trigger_; }
   Trigger<> *get_replying_trigger() { return &this->replying_trigger_; }
   Trigger<> *get_listening_trigger() { return &this->listening_trigger_; }
+  Trigger<> *get_searching_trigger() { return &this->searching_trigger_; }
 
- protected:
+  protected:
   void connect_websocket_();
   void send_audio_chunk_(const uint8_t *data, size_t len);
   void process_received_audio_(const uint8_t *data, size_t len);
@@ -92,6 +93,10 @@ class VoiceAssistantWebSocket : public Component {
   Trigger<> thinking_trigger_{};
   Trigger<> replying_trigger_{};
   Trigger<> listening_trigger_{};
+  Trigger<> searching_trigger_{};
+
+  bool searching_phase_active_{false};
+  static const uint32_t AUTO_STOP_SEARCHING_MS = 60000;
 
   uint32_t starting_millis_{0};
   static const uint32_t READY_TIMEOUT_MS = 15000;

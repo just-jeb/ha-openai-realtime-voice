@@ -30,11 +30,11 @@
 
 substitutions:
   # Voice Assistant Phase IDs (for state management)
-  voice_assist_idle_phase_id: '1'
   voice_assist_waiting_for_command_phase_id: '2'
   voice_assist_listening_for_command_phase_id: '3'
   voice_assist_thinking_phase_id: '4'
   voice_assist_replying_phase_id: '5'
+  voice_assist_searching_phase_id: '6'
   voice_assist_not_ready_phase_id: '10'
   voice_assist_error_phase_id: '11'
   # Server URL is now defined in secrets.yaml as server_url
@@ -144,11 +144,6 @@ globals:
     initial_value: ${voice_assist_not_ready_phase_id}
   # Global variable tracking if the dial was recently touched
   - id: dial_touched
-    type: bool
-    restore_value: no
-    initial_value: 'false'
-  # Global variable tracking if the LED color was recently changed
-  - id: color_changed
     type: bool
     restore_value: no
     initial_value: 'false'
@@ -277,7 +272,7 @@ binary_sensor:
         then:
           - if:
               condition:
-                lambda: return !id(init_in_progress) && !id(color_changed);
+                lambda: return !id(init_in_progress);
               then:
                 - event.trigger:
                     id: button_press_event
@@ -293,7 +288,7 @@ binary_sensor:
         then:
           - if:
               condition:
-                lambda: return !id(init_in_progress) && !id(color_changed);
+                lambda: return !id(init_in_progress);
               then:
                 - event.trigger:
                     id: button_press_event
@@ -304,7 +299,7 @@ binary_sensor:
         then:
           - if:
               condition:
-                lambda: return !id(init_in_progress) && !id(color_changed);
+                lambda: return !id(init_in_progress);
               then:
                 - light.turn_off: voice_assistant_leds
                 - event.trigger:
@@ -381,7 +376,7 @@ light:
           name: "Waiting for Command"
           update_interval: 100ms
           lambda: |-
-            auto light_color = id(led_ring).current_values;
+            auto light_color = id(voice_assistant_leds).current_values;
             Color color(light_color.get_red() * 255, light_color.get_green() * 255,
                   light_color.get_blue() * 255);
             for (uint8_t i = 0; i < 12; i++) {
@@ -406,7 +401,7 @@ light:
           name: "Listening For Command"
           update_interval: 50ms
           lambda: |-
-            auto light_color = id(led_ring).current_values;
+            auto light_color = id(voice_assistant_leds).current_values;
             Color color(light_color.get_red() * 255, light_color.get_green() * 255,
                   light_color.get_blue() * 255);
             for (uint8_t i = 0; i < 12; i++) {
@@ -438,7 +433,7 @@ light:
               brightness_step = 0;
               brightness_decreasing = true;
             }
-            auto light_color = id(led_ring).current_values;
+            auto light_color = id(voice_assistant_leds).current_values;
             Color color(light_color.get_red() * 255, light_color.get_green() * 255,
                   light_color.get_blue() * 255);
             for (uint8_t i = 0; i < 12; i++) {
@@ -463,7 +458,7 @@ light:
           update_interval: 50ms
           lambda: |-
             id(global_led_animation_index) = (12 + id(global_led_animation_index) - 1) % 12;
-            auto light_color = id(led_ring).current_values;
+            auto light_color = id(voice_assistant_leds).current_values;
             Color color(light_color.get_red() * 255, light_color.get_green() * 255,
                   light_color.get_blue() * 255);
             for (uint8_t i = 0; i < 12; i++) {
@@ -484,6 +479,31 @@ light:
               }
             }
       - addressable_lambda:
+          name: "Searching"
+          update_interval: 50ms
+          lambda: |-
+            auto light_color = id(voice_assistant_leds).current_values;
+            Color color(light_color.get_red() * 255, light_color.get_green() * 255,
+                  light_color.get_blue() * 255);
+            for (uint8_t i = 0; i < 12; i++) {
+              if (i == id(global_led_animation_index) % 12) {
+                it[i] = color;
+              } else if (i == (id(global_led_animation_index) + 11) % 12) {
+                it[i] = color * 192;
+              } else if (i == (id(global_led_animation_index) + 10) % 12) {
+                it[i] = color * 128;
+              } else if (i == (id(global_led_animation_index) + 6) % 12) {
+                it[i] = color;
+              } else if (i == (id(global_led_animation_index) + 5) % 12) {
+                it[i] = color * 192;
+              } else if (i == (id(global_led_animation_index) + 4) % 12) {
+                it[i] = color * 128;
+              } else {
+                it[i] = Color::BLACK;
+              }
+            }
+            id(global_led_animation_index) = (id(global_led_animation_index) + 1) % 12;
+      - addressable_lambda:
           name: "Active Pulse"
           update_interval: 50ms
           lambda: |-
@@ -494,7 +514,7 @@ light:
               brightness_step = 0;
               brightness_increasing = true;
             }
-            auto light_color = id(led_ring).current_values;
+            auto light_color = id(voice_assistant_leds).current_values;
             Color color(light_color.get_red() * 255, light_color.get_green() * 255,
                   light_color.get_blue() * 255);
             uint8_t brightness = (brightness_step * 255) / brightness_steps;
@@ -518,7 +538,7 @@ light:
           update_interval: 16ms
           lambda: |-
             Color muted_color(255, 0, 0);
-            auto light_color = id(led_ring).current_values;
+            auto light_color = id(voice_assistant_leds).current_values;
             Color color(light_color.get_red() * 255, light_color.get_green() * 255,
                   light_color.get_blue() * 255);
             for (uint8_t i = 0; i < 12; i++) {
@@ -648,14 +668,14 @@ script:
             id(control_leds_voice_assistant_thinking_phase).execute();
           } else if (id(voice_assistant_phase) == ${voice_assist_replying_phase_id}) {
             id(control_leds_voice_assistant_replying_phase).execute();
+          } else if (id(voice_assistant_phase) == ${voice_assist_searching_phase_id}) {
+            id(control_leds_voice_assistant_searching_phase).execute();
           } else if (id(voice_assistant_phase) == ${voice_assist_error_phase_id}) {
             id(control_leds_voice_assistant_error_phase).execute();
           } else if (id(voice_assistant_phase) == ${voice_assist_not_ready_phase_id}) {
             id(control_leds_voice_assistant_not_ready_phase).execute();
           } else if (id(master_mute_switch).state) {
             id(control_leds_muted_or_silent).execute();
-          } else if (id(voice_assistant_phase) == ${voice_assist_idle_phase_id}) {
-            id(control_leds_voice_assistant_idle_phase).execute();
           }
 
   # Script executed during Improv BLE
@@ -703,35 +723,6 @@ script:
           id: voice_assistant_leds
           effect: "Twinkle"
 
-  # Script executed when the voice assistant is idle
-  # If voice assistant is running AND connected, show white pulse; otherwise turn off
-  - id: control_leds_voice_assistant_idle_phase
-    then:
-      - if:
-          condition:
-            and:
-              - voice_assistant_websocket.is_running:
-                  id: voice_assistant_ws
-              - voice_assistant_websocket.is_connected:
-                  id: voice_assistant_ws
-          then:
-            # Voice assistant is active and connected - show white pulse
-            - light.turn_on:
-                brightness: 66%
-                red: 100%
-                green: 100%
-                blue: 100%
-                id: voice_assistant_leds
-                effect: "Active Pulse"
-          else:
-            # Voice assistant is not active or not connected - turn off
-            - light.turn_off: voice_assistant_leds
-            - if:
-                condition:
-                  light.is_on: led_ring
-                then:
-                  light.turn_on: led_ring
-
   # Script executed when the voice assistant is waiting (connecting to OpenAI) - yellow
   - id: control_leds_voice_assistant_waiting_for_command_phase
     then:
@@ -775,6 +766,17 @@ script:
           blue: 100%
           id: voice_assistant_leds
           effect: "Replying"
+
+  # Script executed when the voice assistant is searching (background tool + listening) - blue-green
+  - id: control_leds_voice_assistant_searching_phase
+    then:
+      - light.turn_on:
+          brightness: !lambda return max( id(led_ring).current_values.get_brightness() , 0.2f );
+          red: 0%
+          green: 100%
+          blue: 80%
+          id: voice_assistant_leds
+          effect: "Searching"
 
   # Script executed when the voice assistant is in error
   - id: control_leds_voice_assistant_error_phase
@@ -1114,6 +1116,9 @@ voice_assistant_websocket:
     - script.execute: control_leds
   on_listening:
     - lambda: id(voice_assistant_phase) = ${voice_assist_listening_for_command_phase_id};  # Green: your turn again
+    - script.execute: control_leds
+  on_searching:
+    - lambda: id(voice_assistant_phase) = ${voice_assist_searching_phase_id};  # Blue-green: background tool + listening
     - script.execute: control_leds
   on_disconnected:
     - lambda: id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};

@@ -84,11 +84,13 @@ void VoiceAssistantWebSocket::loop() {
   if (this->state_ == VOICE_ASSISTANT_WEBSOCKET_RUNNING) {
     uint32_t current_time = millis();
     uint32_t time_since_speaker_audio = current_time - this->last_speaker_audio_time_;
+    uint32_t threshold_ms = this->searching_phase_active_ ? AUTO_STOP_SEARCHING_MS
+                                                         : this->auto_stop_inactivity_ms_;
 
     if (this->last_speaker_audio_time_ > 0 &&
-        time_since_speaker_audio > this->auto_stop_inactivity_ms_) {
+        time_since_speaker_audio > threshold_ms) {
       ESP_LOGI(TAG, "Auto-stopping: Speaker inactive for %u ms (threshold: %u ms)",
-               (unsigned) time_since_speaker_audio, (unsigned) this->auto_stop_inactivity_ms_);
+               (unsigned) time_since_speaker_audio, (unsigned) threshold_ms);
       this->stop("auto_stop_timeout");
     }
   }
@@ -127,6 +129,7 @@ void VoiceAssistantWebSocket::start() {
   ESP_LOGI(TAG, "Starting voice assistant...");
   this->state_ = VOICE_ASSISTANT_WEBSOCKET_STARTING;
   this->last_speaker_audio_time_ = 0;
+  this->searching_phase_active_ = false;
   this->interrupt_time_ = 0;
   this->first_audio_sent_ = false;
   this->first_audio_received_ = false;
@@ -160,6 +163,7 @@ void VoiceAssistantWebSocket::stop(const char *reason) {
 
   ESP_LOGI(TAG, "stop() called, reason: %s, was in state: %d", reason, this->state_);
   this->state_ = VOICE_ASSISTANT_WEBSOCKET_IDLE;
+  this->searching_phase_active_ = false;
 
   if (this->speaker_ != nullptr) {
     this->speaker_->stop();
@@ -512,10 +516,17 @@ void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t e
             this->thinking_trigger_.trigger();
           } else if (message.find("\"phase\":\"replying\"") != std::string::npos ||
                      message.find("\"phase\": \"replying\"") != std::string::npos) {
+            this->searching_phase_active_ = false;
             this->replying_trigger_.trigger();
           } else if (message.find("\"phase\":\"listening\"") != std::string::npos ||
                      message.find("\"phase\": \"listening\"") != std::string::npos) {
+            this->searching_phase_active_ = false;
             this->listening_trigger_.trigger();
+          } else if (message.find("\"phase\":\"searching\"") != std::string::npos ||
+                     message.find("\"phase\": \"searching\"") != std::string::npos) {
+            this->searching_phase_active_ = true;
+            this->last_speaker_audio_time_ = millis();
+            this->searching_trigger_.trigger();
           }
         } else if (message.find("\"type\":\"interrupt\"") != std::string::npos ||
                    message.find("\"type\": \"interrupt\"") != std::string::npos) {

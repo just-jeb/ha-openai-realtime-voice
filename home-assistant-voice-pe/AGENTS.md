@@ -26,7 +26,11 @@ more reliable.
 **Auto-stop on inactivity.** If no speaker audio is received for the
 configured timeout (default 20s, configurable via `auto_stop_timeout` in
 YAML), the session auto-stops. This is tracked by speaker output only,
-not mic input, because the mic always picks up ambient noise.
+not mic input, because the mic always picks up ambient noise. When the
+server sends the `searching` phase (background tool running), the client
+uses a 60s timeout instead so web search can complete without killing
+the session. The timer resets when speaker audio is received or when
+`searching` is received.
 
 **Interrupt via wake word.** If the bot is speaking and the user says
 a wake word, the client sends `{"type":"interrupt"}` and clears its
