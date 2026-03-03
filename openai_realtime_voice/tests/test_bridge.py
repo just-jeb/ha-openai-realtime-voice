@@ -91,9 +91,32 @@ async def test_client_connect_bridge_connects_to_upstream():
         _cleanup_env()
 
 
+def test_session_config_ga_format():
+    """Session config must use GA interface shape (audio.input/output, type: realtime)."""
+    _ensure_env()
+    from app.main import RealtimeVoiceBridge
+
+    bridge = RealtimeVoiceBridge()
+    config = bridge._session_config()
+    try:
+        session = config["session"]
+        assert config["type"] == "session.update"
+        assert session.get("type") == "realtime"
+        assert "audio" in session
+        assert "input" in session["audio"]
+        assert "output" in session["audio"]
+        assert session["audio"]["input"]["format"] == {"type": "audio/pcm", "rate": 24000}
+        assert session["audio"]["output"]["voice"] == "marin"
+        assert session["audio"]["input"]["turn_detection"]["type"] == "server_vad"
+        assert "modalities" not in session
+        assert "voice" not in session
+    finally:
+        _cleanup_env()
+
+
 @pytest.mark.asyncio
 async def test_connect_openai_uses_additional_headers():
-    """Regression: _connect_openai must use additional_headers (websockets 13+), not extra_headers."""
+    """Regression: _connect_openai uses additional_headers (websockets 13+) and GA (no beta header)."""
     fake_port = 19996
     os.environ["OPENAI_API_KEY"] = "test"
     os.environ["OPENAI_REALTIME_URL"] = f"ws://127.0.0.1:{fake_port}"
@@ -124,7 +147,7 @@ async def test_connect_openai_uses_additional_headers():
         assert "additional_headers" in connect_calls[0]
         assert "extra_headers" not in connect_calls[0]
         assert "Authorization" in connect_calls[0]["additional_headers"]
-        assert "OpenAI-Beta" in connect_calls[0]["additional_headers"]
+        assert "OpenAI-Beta" not in connect_calls[0]["additional_headers"]
     finally:
         fake_server_task.cancel()
         try:

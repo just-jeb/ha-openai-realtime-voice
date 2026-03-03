@@ -94,20 +94,26 @@ class RealtimeVoiceBridge:
             raise ValueError("OPENAI_API_KEY environment variable is required")
 
     def _session_config(self) -> dict:
-        """Build session.update payload for OpenAI Realtime."""
+        """Build session.update payload for OpenAI Realtime (GA interface)."""
         return {
             "type": "session.update",
             "session": {
-                "modalities": ["text", "audio"],
+                "type": "realtime",
                 "instructions": self.instructions,
-                "voice": "marin",
-                "input_audio_format": "pcm16",
-                "output_audio_format": "pcm16",
-                "turn_detection": {
-                    "type": "server_vad",
-                    "threshold": self.vad_threshold,
-                    "prefix_padding_ms": self.vad_prefix_padding_ms,
-                    "silence_duration_ms": self.vad_silence_duration_ms,
+                "audio": {
+                    "input": {
+                        "format": {"type": "audio/pcm", "rate": SAMPLE_RATE},
+                        "turn_detection": {
+                            "type": "server_vad",
+                            "threshold": self.vad_threshold,
+                            "prefix_padding_ms": self.vad_prefix_padding_ms,
+                            "silence_duration_ms": self.vad_silence_duration_ms,
+                        },
+                    },
+                    "output": {
+                        "format": {"type": "audio/pcm", "rate": SAMPLE_RATE},
+                        "voice": "marin",
+                    },
                 },
                 "tools": TOOLS,
             },
@@ -120,7 +126,6 @@ class RealtimeVoiceBridge:
         )
         additional_headers = {
             "Authorization": f"Bearer {self.openai_api_key}",
-            "OpenAI-Beta": "realtime=v1",
         }
         ws = await websockets.connect(
             url,
@@ -219,6 +224,8 @@ class RealtimeVoiceBridge:
         client_id: str,
         audio_queue: asyncio.Queue,
         end_reason: dict,
+        response_idle: asyncio.Event,
+        pending_tool_tasks: set,
     ) -> None:
         """Forward OpenAI events to ESP32; audio goes through paced queue."""
         delta_count = 0
@@ -233,7 +240,7 @@ class RealtimeVoiceBridge:
                     continue
                 ev_type = event.get("type")
 
-                if ev_type == "response.audio.delta":
+                if ev_type == "response.output_audio.delta":
                     delta_b64 = event.get("delta")
                     if delta_b64:
                         audio_bytes = base64.standard_b64decode(delta_b64)
@@ -243,7 +250,7 @@ class RealtimeVoiceBridge:
                         if self.recorder:
                             self.recorder.record_output_audio(audio_bytes)
 
-                elif ev_type == "response.audio.done":
+                elif ev_type == "response.output_audio.done":
                     await audio_queue.put(None)
                     duration_s = delta_bytes_total / BYTES_PER_SEC if delta_bytes_total else 0
                     logger.info(
@@ -253,17 +260,38 @@ class RealtimeVoiceBridge:
                     delta_count = 0
                     delta_bytes_total = 0
 
+                elif ev_type == "response.created":
+                    response_idle.clear()
+                    logger.info("OpenAI new response started")
+
                 elif ev_type == "response.done":
                     response = event.get("response", {})
+                    response_idle.set()
+                    status = response.get("status")
+                    if status and status != "completed":
+                        logger.warning(
+                            "Response status=%s details=%s",
+                            status,
+                            response.get("status_details"),
+                        )
                     output = response.get("output", [])
                     for item in output:
                         if item.get("type") == "function_call":
-                            should_stop = await self._handle_tool_call(
-                                client_ws, openai_ws, item, audio_queue
-                            )
-                            if should_stop:
-                                end_reason["reason"] = "disconnect_tool"
-                                return
+                            if item.get("name") == "disconnect_client":
+                                should_stop = await self._handle_tool_call(
+                                    client_ws, openai_ws, item, audio_queue
+                                )
+                                if should_stop:
+                                    end_reason["reason"] = "disconnect_tool"
+                                    return
+                            else:
+                                task = asyncio.create_task(
+                                    self._run_tool_in_background(
+                                        openai_ws, item, response_idle
+                                    )
+                                )
+                                pending_tool_tasks.add(task)
+                                task.add_done_callback(pending_tool_tasks.discard)
 
                 elif ev_type == "error":
                     logger.error("OpenAI error: %s", event.get("message", event))
@@ -277,8 +305,6 @@ class RealtimeVoiceBridge:
                     logger.info("OpenAI detected speech stop")
                 elif ev_type == "input_audio_buffer.committed":
                     logger.info("OpenAI audio buffer committed")
-                elif ev_type == "response.created":
-                    logger.info("OpenAI new response started")
         except websockets.exceptions.ConnectionClosed as e:
             end_reason["reason"] = "openai_disconnected"
             end_reason["code"] = e.code
@@ -289,6 +315,10 @@ class RealtimeVoiceBridge:
             logger.error("Error in openai_to_client: %s", e, exc_info=True)
             end_reason["reason"] = "openai_to_client_error"
         finally:
+            for task in pending_tool_tasks:
+                task.cancel()
+            if pending_tool_tasks:
+                await asyncio.gather(*pending_tool_tasks, return_exceptions=True)
             if "reason" not in end_reason:
                 end_reason["reason"] = "openai_disconnected"
 
@@ -417,6 +447,43 @@ class RealtimeVoiceBridge:
         )
         return False
 
+    async def _run_tool_in_background(
+        self,
+        openai_ws,
+        item: dict,
+        response_idle: asyncio.Event,
+    ) -> None:
+        """Run a non-session-ending tool (e.g. search_web) without blocking the event loop.
+        Waits for response_idle before sending tool result so we don't send response.create
+        while the model is mid-speech."""
+        name = item.get("name")
+        call_id = item.get("call_id")
+        if not call_id:
+            return
+        args_str = item.get("arguments", "{}")
+        try:
+            args = json.loads(args_str) if args_str else {}
+        except json.JSONDecodeError:
+            args = {}
+
+        output: str
+        if name == "search_web":
+            query = args.get("query", "")
+            if not query:
+                output = json.dumps({"error": "Missing query"})
+            else:
+                try:
+                    text = await self._web_search(query)
+                    output = json.dumps({"result": text})
+                except Exception as e:
+                    logger.warning("Web search failed: %s", e)
+                    output = json.dumps({"error": str(e)})
+        else:
+            output = json.dumps({"error": f"Unknown tool: {name}"})
+
+        await response_idle.wait()
+        await self._send_tool_result(openai_ws, call_id, output)
+
     async def _send_tool_result(self, openai_ws, call_id: str, output: str) -> None:
         """Send function_call_output item and trigger response.create."""
         await openai_ws.send(
@@ -521,9 +588,18 @@ class RealtimeVoiceBridge:
                     pass
                 return
 
+            response_idle = asyncio.Event()
+            response_idle.set()
+            pending_tool_tasks = set()
             openai_task = asyncio.create_task(
                 self._openai_to_client(
-                    client_ws, openai_ws, client_id, audio_queue, end_reason
+                    client_ws,
+                    openai_ws,
+                    client_id,
+                    audio_queue,
+                    end_reason,
+                    response_idle,
+                    pending_tool_tasks,
                 )
             )
             sender_task = asyncio.create_task(
