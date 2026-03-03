@@ -25,7 +25,7 @@ ESP32 Voice PE                    Addon
                                        | search_web tool ------> Responses API
 ```
 
-- **Audio:** 24 kHz, 16-bit, mono PCM. Device binary frames are base64-encoded and sent as `input_audio_buffer.append`; `response.audio.delta` is base64-decoded and sent as binary to the device.
+- **Audio:** 24 kHz, 16-bit, mono PCM. Device binary frames are base64-encoded and sent as `input_audio_buffer.append`; `response.output_audio.delta` (Realtime API GA) is base64-decoded and sent as binary to the device.
 - **Interrupt:** Device sends `{"type":"interrupt"}`; server sends `response.cancel` to OpenAI.
 - **Disconnect:** When the user says goodbye, OpenAI calls `disconnect_client`; server sends `{"type":"disconnect"}` to the device, returns from the handler so the task ends, and the cancellation cascade closes both WebSockets.
 - **Web search:** The `search_web` tool calls the OpenAI Responses API (GA `web_search` tool, `gpt-5-nano` model) using `WEB_SEARCH_API_KEY` or `OPENAI_API_KEY`. The key must have **Responses (Write)** permission in the OpenAI dashboard.
@@ -33,7 +33,8 @@ ESP32 Voice PE                    Addon
 ## Design decisions
 
 - **No MCP.** Smart home is intended as a separate, local HA voice pipeline (e.g. different wake word). This addon is for voice Q&A and web search only.
-- **Two tools:** `disconnect_client` and `search_web`, both implemented in `main.py` in `_handle_tool_call`.
+- **Realtime API GA.** The addon uses the GA interface (no beta header); session config uses GA shape (`audio.input`/`audio.output`, `type: "realtime"`); server events are `response.output_audio.delta` / `response.output_audio.done`.
+- **Two tools:** `disconnect_client` and `search_web`, both in `main.py`. `disconnect_client` is handled synchronously in `_handle_tool_call` (ends session). Other tools (e.g. `search_web`) run in the background via `_run_tool_in_background` so the event loop stays responsive and the model can acknowledge the user while a tool is pending.
 - **Config:** HA Addon UI → `config.yaml` → `run.sh` (bashio) → env vars → `main.py`. No config file parsing in Python.
 
 ## Config options
@@ -48,7 +49,8 @@ ESP32 Voice PE                    Addon
 ## Adding a tool
 
 1. Add the tool schema to the `TOOLS` list in `main.py`.
-2. In `_handle_tool_call`, handle the tool name: parse arguments, run logic, call `_send_tool_result(openai_ws, call_id, result_json_string)` and send `response.create` if needed.
+2. **Session-ending tools** (e.g. `disconnect_client`): In `_handle_tool_call`, handle the name, perform the action, return `True` to end the session.
+3. **Other tools** (e.g. `search_web`): In `response.done`, schedule `_run_tool_in_background(openai_ws, item, response_idle)`. Implement the tool logic in `_run_tool_in_background` (it runs the tool, waits for `response_idle`, then calls `_send_tool_result`). Do not block the event loop with long-running work in `_handle_tool_call`.
 
 ## Docker build
 

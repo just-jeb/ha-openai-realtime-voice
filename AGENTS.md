@@ -40,7 +40,7 @@ Both sides must follow this. If one side changes, the other may need updates.
 
 **Client:** Resample mic 16 kHz → 24 kHz before send; resample received 24 kHz → 48 kHz for the speaker.
 
-**Server:** Encode PCM to base64 and send as `input_audio_buffer.append`; decode `response.audio.delta` and send raw PCM to the client.
+**Server:** Encode PCM to base64 and send as `input_audio_buffer.append`; decode `response.output_audio.delta` (Realtime API GA) and send raw PCM to the client. Tool calls such as `search_web` run in the background so the event loop stays responsive.
 
 ## Installation and deployment
 
