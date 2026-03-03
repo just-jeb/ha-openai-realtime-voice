@@ -221,8 +221,9 @@ class RealtimeVoiceBridge:
         """Send phase message to client for LED/UX feedback."""
         try:
             await client_ws.send(json.dumps({"type": "phase", "phase": phase}))
-        except Exception:
-            pass
+            logger.info("Phase -> %s", phase)
+        except Exception as e:
+            logger.warning("Failed to send phase '%s': %s", phase, e)
 
     async def _openai_to_client(
         self,
@@ -239,6 +240,7 @@ class RealtimeVoiceBridge:
         delta_count = 0
         delta_bytes_total = 0
         sent_replying_phase = False
+        had_audio = False
         try:
             async for raw in openai_ws:
                 if not isinstance(raw, str):
@@ -265,12 +267,11 @@ class RealtimeVoiceBridge:
                 elif ev_type == "response.output_audio.done":
                     await audio_queue.put(None)
                     sent_replying_phase = False
-                    phase = "searching" if pending_tool_tasks else "listening"
-                    await self._send_phase(client_ws, phase)
+                    had_audio = True
                     duration_s = delta_bytes_total / BYTES_PER_SEC if delta_bytes_total else 0
                     logger.info(
-                        "Response audio complete: %d deltas, %d bytes (%.1f s) -> phase=%s",
-                        delta_count, delta_bytes_total, duration_s, phase,
+                        "Response audio complete: %d deltas, %d bytes (%.1f s)",
+                        delta_count, delta_bytes_total, duration_s,
                     )
                     delta_count = 0
                     delta_bytes_total = 0
@@ -306,7 +307,6 @@ class RealtimeVoiceBridge:
                                     end_reason["reason"] = "disconnect_tool"
                                     return
                             else:
-                                await self._send_phase(client_ws, "searching")
                                 task = asyncio.create_task(
                                     self._run_tool_in_background(
                                         openai_ws, item, response_idle
@@ -314,6 +314,15 @@ class RealtimeVoiceBridge:
                                 )
                                 pending_tool_tasks.add(task)
                                 task.add_done_callback(pending_tool_tasks.discard)
+                    # Phase decision: single place after full response (audio + function calls) is known
+                    if had_audio or pending_tool_tasks:
+                        phase = "searching" if pending_tool_tasks else "listening"
+                        logger.info(
+                            "Phase decision: had_audio=%s, pending_tools=%d -> %s",
+                            had_audio, len(pending_tool_tasks), phase,
+                        )
+                        await self._send_phase(client_ws, phase)
+                    had_audio = False
 
                 elif ev_type == "error":
                     logger.error("OpenAI error: %s", event.get("message", event))
@@ -575,6 +584,18 @@ class RealtimeVoiceBridge:
             response_idle = asyncio.Event()
             response_idle.set()
             pending_tool_tasks = set()
+
+            async def ready_retry_loop() -> None:
+                for attempt in range(3):
+                    await asyncio.sleep(2.0)
+                    if first_audio_from_client[0]:
+                        return
+                    try:
+                        await client_ws.send(json.dumps({"type": "ready"}))
+                        logger.info("Ready retry #%d sent", attempt + 1)
+                    except Exception as e:
+                        logger.warning("Ready retry #%d failed: %s", attempt + 1, e)
+
             client_task = asyncio.create_task(
                 self._client_to_openai(
                     client_ws, openai_ws, client_id, audio_queue,
@@ -597,9 +618,10 @@ class RealtimeVoiceBridge:
                     client_ws, audio_queue, first_audio_to_client, end_reason
                 )
             )
+            ready_retry_task = asyncio.create_task(ready_retry_loop())
 
             finished, pending = await asyncio.wait(
-                [client_task, openai_task, sender_task],
+                [client_task, openai_task, sender_task, ready_retry_task],
                 return_when=asyncio.FIRST_COMPLETED,
             )
 

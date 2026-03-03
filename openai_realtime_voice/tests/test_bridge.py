@@ -14,6 +14,7 @@ import os
 import sys
 import time
 import base64
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -321,4 +322,138 @@ async def test_clear_audio_queue_on_interrupt():
     RealtimeVoiceBridge._clear_audio_queue(audio_queue)
     assert audio_queue.empty()
 
+    _cleanup_env()
+
+
+# ---------------------------------------------------------------------------
+# Phase decision: phase sent once at response.done (searching vs listening)
+# ---------------------------------------------------------------------------
+
+
+class _FakeOpenAIWs:
+    """Async iterator yielding scripted OpenAI events (JSON strings)."""
+
+    def __init__(self, events: list[dict]):
+        self._events = list(events)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._events:
+            raise StopAsyncIteration
+        return json.dumps(self._events.pop(0))
+
+
+def _client_ws_recording_phases():
+    """Fake client_ws that records phase messages sent to it."""
+    phases_sent: list[str] = []
+
+    class FakeClientWs:
+        async def send(self, data):
+            if isinstance(data, str):
+                try:
+                    obj = json.loads(data)
+                    if obj.get("type") == "phase":
+                        phases_sent.append(obj.get("phase", ""))
+                except json.JSONDecodeError:
+                    pass
+
+    return FakeClientWs(), phases_sent
+
+
+@pytest.mark.asyncio
+async def test_phase_searching_with_function_call():
+    """
+    When response has audio + function_call(search_web), phase sent after
+    response.done is "searching" only (no "listening" in between).
+    """
+    _ensure_env()
+    from app.main import RealtimeVoiceBridge
+
+    bridge = RealtimeVoiceBridge()
+    audio_queue: asyncio.Queue = asyncio.Queue()
+    end_reason = {}
+    response_idle = asyncio.Event()
+    response_idle.set()
+    pending_tool_tasks = set()
+    fake_client_ws, phases_sent = _client_ws_recording_phases()
+
+    events = [
+        {"type": "response.created"},
+        {"type": "response.output_audio.delta", "delta": base64.standard_b64encode(b"\x00" * 960).decode("ascii")},
+        {"type": "response.output_audio.done"},
+        {
+            "type": "response.done",
+            "response": {
+                "status": "completed",
+                "output": [
+                    {"type": "message"},
+                    {
+                        "type": "function_call",
+                        "name": "search_web",
+                        "call_id": "call_abc123",
+                        "arguments": '{"query": "weather"}',
+                    },
+                ],
+            },
+        },
+    ]
+    fake_openai_ws = _FakeOpenAIWs(events)
+
+    with patch.object(bridge, "_run_tool_in_background", AsyncMock()):
+        await bridge._openai_to_client(
+            fake_client_ws,
+            fake_openai_ws,
+            "test",
+            audio_queue,
+            end_reason,
+            response_idle,
+            pending_tool_tasks,
+        )
+
+    assert phases_sent == ["replying", "searching"], (
+        f"Expected [replying, searching], got {phases_sent}"
+    )
+    _cleanup_env()
+
+
+@pytest.mark.asyncio
+async def test_phase_listening_without_function_call():
+    """When response has audio only (no function_call), phase after response.done is "listening"."""
+    _ensure_env()
+    from app.main import RealtimeVoiceBridge
+
+    bridge = RealtimeVoiceBridge()
+    audio_queue: asyncio.Queue = asyncio.Queue()
+    end_reason = {}
+    response_idle = asyncio.Event()
+    response_idle.set()
+    pending_tool_tasks = set()
+    fake_client_ws, phases_sent = _client_ws_recording_phases()
+
+    events = [
+        {"type": "response.created"},
+        {"type": "response.output_audio.delta", "delta": base64.standard_b64encode(b"\x00" * 960).decode("ascii")},
+        {"type": "response.output_audio.done"},
+        {
+            "type": "response.done",
+            "response": {"status": "completed", "output": [{"type": "message"}]},
+        },
+    ]
+    fake_openai_ws = _FakeOpenAIWs(events)
+
+    await bridge._openai_to_client(
+        fake_client_ws,
+        fake_openai_ws,
+        "test",
+        audio_queue,
+        end_reason,
+        response_idle,
+        pending_tool_tasks,
+    )
+
+    assert phases_sent == ["replying", "listening"], (
+        f"Expected [replying, listening], got {phases_sent}"
+    )
     _cleanup_env()
