@@ -114,6 +114,7 @@ class VoiceAssistantWebSocket : public Component {
   // Diagnostic logging
   bool first_audio_sent_{false};
   bool first_audio_received_{false};
+  bool was_bot_speaking_{false};
   uint32_t connection_count_{0};
   uint32_t connect_millis_{0};
   uint32_t audio_chunks_sent_{0};

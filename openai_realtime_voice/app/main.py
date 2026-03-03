@@ -147,36 +147,48 @@ class RealtimeVoiceBridge:
     async def _client_to_openai(
         self,
         client_ws,
-        openai_ws,
+        openai_ws_holder: list,
+        openai_ready: asyncio.Event,
         client_id: str,
         audio_queue: asyncio.Queue,
         first_audio_from_client: list,
         end_reason: dict,
     ) -> None:
-        """Forward ESP32 binary audio and JSON control to OpenAI."""
-        msg_count = 0
-        t_start = time.monotonic()
+        """Forward ESP32 binary audio and JSON control to OpenAI. Reads from client_ws
+        immediately; buffers audio until openai_ready is set, then forwards to OpenAI."""
+        audio_buffer: list = []
         try:
             async for message in client_ws:
-                msg_count += 1
-                if msg_count <= 10:
-                    logger.info("[diag] client msg #%d: %s len=%d t=+%.3fs",
-                                msg_count,
-                                "bin" if isinstance(message, bytes) else "txt",
-                                len(message),
-                                time.monotonic() - t_start)
                 if isinstance(message, bytes):
                     if not first_audio_from_client[0]:
                         first_audio_from_client[0] = True
                         logger.info("First audio from client (%d bytes)", len(message))
                     if len(message) % 2 != 0:
                         message = message + b"\x00"
+                    if not openai_ready.is_set() or openai_ws_holder[0] is None:
+                        audio_buffer.append(message)
+                        continue
+                    openai_ws = openai_ws_holder[0]
+                    # Flush buffered audio first (only once when OpenAI becomes ready)
+                    for buffered in audio_buffer:
+                        b64 = base64.standard_b64encode(buffered).decode("ascii")
+                        await openai_ws.send(
+                            json.dumps({"type": "input_audio_buffer.append", "audio": b64})
+                        )
+                        if self.recorder:
+                            self.recorder.record_input_audio(buffered)
+                    audio_buffer.clear()
+                    # Send current chunk
                     b64 = base64.standard_b64encode(message).decode("ascii")
-                    event = {"type": "input_audio_buffer.append", "audio": b64}
-                    await openai_ws.send(json.dumps(event))
+                    await openai_ws.send(
+                        json.dumps({"type": "input_audio_buffer.append", "audio": b64})
+                    )
                     if self.recorder:
                         self.recorder.record_input_audio(message)
                 else:
+                    if not openai_ready.is_set() or openai_ws_holder[0] is None:
+                        continue
+                    openai_ws = openai_ws_holder[0]
                     try:
                         data = json.loads(message) if isinstance(message, str) else message
                         if data.get("type") == "interrupt":
@@ -257,6 +269,14 @@ class RealtimeVoiceBridge:
                     logger.debug("Session created")
                 elif ev_type == "session.updated":
                     logger.debug("Session updated")
+                elif ev_type == "input_audio_buffer.speech_started":
+                    logger.info("OpenAI detected speech start")
+                elif ev_type == "input_audio_buffer.speech_stopped":
+                    logger.info("OpenAI detected speech stop")
+                elif ev_type == "input_audio_buffer.committed":
+                    logger.info("OpenAI audio buffer committed")
+                elif ev_type == "response.created":
+                    logger.info("OpenAI new response started")
         except websockets.exceptions.ConnectionClosed as e:
             end_reason["reason"] = "openai_disconnected"
             end_reason["code"] = e.code
@@ -437,7 +457,9 @@ class RealtimeVoiceBridge:
         return "No result from web search."
 
     async def handle_client(self, client_ws) -> None:
-        """One client connection = one OpenAI session. First task to finish triggers cleanup."""
+        """One client connection = one OpenAI session. First task to finish triggers cleanup.
+        Client messages are read immediately (in parallel with OpenAI connect) to avoid
+        TCP backpressure that kills the first connection after boot."""
         client_id = self._client_id_from_ws(client_ws)
         logger.info("Client connected: %s", client_id)
         start_time = time.monotonic()
@@ -445,27 +467,53 @@ class RealtimeVoiceBridge:
         if self.recorder:
             self.recorder.start_recording(client_id)
 
-        openai_ws = None
+        openai_ws_holder: list = [None]
         end_reason = {}
         first_audio_from_client = [False]
         first_audio_to_client = [False]
+        audio_queue: asyncio.Queue = asyncio.Queue()
+
+        async def setup_openai() -> None:
+            try:
+                ws = await self._connect_openai()
+                await self._configure_session(ws)
+                openai_ws_holder[0] = ws
+                openai_ready.set()
+            except Exception as e:
+                logger.error("OpenAI setup failed: %s", e, exc_info=True)
+                end_reason["reason"] = "openai_setup_error"
+                openai_ready.set()
+
+        openai_ready = asyncio.Event()
+        setup_task = asyncio.create_task(setup_openai())
+        client_task = asyncio.create_task(
+            self._client_to_openai(
+                client_ws, openai_ws_holder, openai_ready, client_id, audio_queue,
+                first_audio_from_client, end_reason,
+            )
+        )
 
         try:
-            logger.info("[diag] %s: starting OpenAI connect", client_id)
-            t0 = time.monotonic()
-            openai_ws = await self._connect_openai()
-            logger.info("[diag] %s: OpenAI connected in %.3fs", client_id, time.monotonic() - t0)
-            await self._configure_session(openai_ws)
-            logger.info("[diag] %s: session configured, starting forwarding tasks (%.3fs since client connect)",
-                        client_id, time.monotonic() - start_time)
-            audio_queue: asyncio.Queue = asyncio.Queue()
+            await setup_task
+            openai_ws = openai_ws_holder[0]
+            if openai_ws is None:
+                client_task.cancel()
+                try:
+                    await client_task
+                except asyncio.CancelledError:
+                    pass
+                return
+            if client_task.done():
+                try:
+                    client_task.result()
+                except Exception:
+                    pass
+                try:
+                    await openai_ws.close()
+                except Exception:
+                    pass
+                return
 
-            client_task = asyncio.create_task(
-                self._client_to_openai(
-                    client_ws, openai_ws, client_id, audio_queue,
-                    first_audio_from_client, end_reason,
-                )
-            )
             openai_task = asyncio.create_task(
                 self._openai_to_client(
                     client_ws, openai_ws, client_id, audio_queue, end_reason
@@ -495,6 +543,7 @@ class RealtimeVoiceBridge:
             logger.error("Session error: %s", e, exc_info=True)
             end_reason["reason"] = "session_error"
         finally:
+            openai_ws = openai_ws_holder[0]
             if openai_ws:
                 try:
                     await openai_ws.close()
