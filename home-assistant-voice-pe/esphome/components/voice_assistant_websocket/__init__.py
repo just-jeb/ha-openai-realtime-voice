@@ -22,6 +22,10 @@ CONF_ON_CONNECTED = "on_connected"
 CONF_ON_DISCONNECTED = "on_disconnected"
 CONF_ON_ERROR = "on_error"
 CONF_ON_STOPPED = "on_stopped"
+CONF_ON_READY = "on_ready"
+CONF_ON_THINKING = "on_thinking"
+CONF_ON_REPLYING = "on_replying"
+CONF_ON_LISTENING = "on_listening"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -34,6 +38,10 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_ON_DISCONNECTED): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_ERROR): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_STOPPED): automation.validate_automation(single=True),
+        cv.Optional(CONF_ON_READY): automation.validate_automation(single=True),
+        cv.Optional(CONF_ON_THINKING): automation.validate_automation(single=True),
+        cv.Optional(CONF_ON_REPLYING): automation.validate_automation(single=True),
+        cv.Optional(CONF_ON_LISTENING): automation.validate_automation(single=True),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -84,6 +92,26 @@ async def to_code(config):
     if CONF_ON_STOPPED in config:
         await automation.build_automation(
             var.get_stopped_trigger(), [], config[CONF_ON_STOPPED]
+        )
+
+    if CONF_ON_READY in config:
+        await automation.build_automation(
+            var.get_ready_trigger(), [], config[CONF_ON_READY]
+        )
+
+    if CONF_ON_THINKING in config:
+        await automation.build_automation(
+            var.get_thinking_trigger(), [], config[CONF_ON_THINKING]
+        )
+
+    if CONF_ON_REPLYING in config:
+        await automation.build_automation(
+            var.get_replying_trigger(), [], config[CONF_ON_REPLYING]
+        )
+
+    if CONF_ON_LISTENING in config:
+        await automation.build_automation(
+            var.get_listening_trigger(), [], config[CONF_ON_LISTENING]
         )
 
 

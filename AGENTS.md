@@ -36,6 +36,10 @@ Both sides must follow this. If one side changes, the other may need updates.
 | Direction        | Message              | Meaning                                      |
 |-----------------|----------------------|----------------------------------------------|
 | Client → Server | `{"type":"interrupt"}` | Stop current response and listen for input |
+| Server → Client | `{"type":"ready"}` | OpenAI connected; client should start sending audio and show "listening" (e.g. green LEDs). |
+| Server → Client | `{"type":"phase","phase":"thinking"}` | User stopped speaking; OpenAI is processing. |
+| Server → Client | `{"type":"phase","phase":"replying"}` | Bot started speaking. |
+| Server → Client | `{"type":"phase","phase":"listening"}` | Bot finished; ready for next user input. |
 | Server → Client | `{"type":"disconnect"}` (optional: `"message"`, `"reason"`) | Session ended (e.g. user said goodbye); client should stop and go idle. |
 
 **Client:** Resample mic 16 kHz → 24 kHz before send; resample received 24 kHz → 48 kHz for the speaker.

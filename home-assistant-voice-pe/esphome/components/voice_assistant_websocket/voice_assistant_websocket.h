@@ -55,6 +55,10 @@ class VoiceAssistantWebSocket : public Component {
   Trigger<> *get_disconnected_trigger() { return &this->disconnected_trigger_; }
   Trigger<> *get_error_trigger() { return &this->error_trigger_; }
   Trigger<> *get_stopped_trigger() { return &this->stopped_trigger_; }
+  Trigger<> *get_ready_trigger() { return &this->ready_trigger_; }
+  Trigger<> *get_thinking_trigger() { return &this->thinking_trigger_; }
+  Trigger<> *get_replying_trigger() { return &this->replying_trigger_; }
+  Trigger<> *get_listening_trigger() { return &this->listening_trigger_; }
 
  protected:
   void connect_websocket_();
@@ -84,6 +88,13 @@ class VoiceAssistantWebSocket : public Component {
   Trigger<> disconnected_trigger_{};
   Trigger<> error_trigger_{};
   Trigger<> stopped_trigger_{};
+  Trigger<> ready_trigger_{};
+  Trigger<> thinking_trigger_{};
+  Trigger<> replying_trigger_{};
+  Trigger<> listening_trigger_{};
+
+  uint32_t starting_millis_{0};
+  static const uint32_t READY_TIMEOUT_MS = 15000;
 
   std::vector<uint8_t> input_buffer_;
   std::vector<uint8_t> output_buffer_;

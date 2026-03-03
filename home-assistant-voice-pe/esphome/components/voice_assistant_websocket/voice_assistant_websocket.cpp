@@ -71,6 +71,16 @@ void VoiceAssistantWebSocket::loop() {
     this->start();
   }
 
+  if (this->state_ == VOICE_ASSISTANT_WEBSOCKET_STARTING) {
+    if (this->starting_millis_ > 0) {
+      uint32_t elapsed = millis() - this->starting_millis_;
+      if (elapsed > READY_TIMEOUT_MS) {
+        ESP_LOGW(TAG, "Ready timeout (%u ms), stopping", (unsigned) READY_TIMEOUT_MS);
+        this->stop("ready_timeout");
+      }
+    }
+  }
+
   if (this->state_ == VOICE_ASSISTANT_WEBSOCKET_RUNNING) {
     uint32_t current_time = millis();
     uint32_t time_since_speaker_audio = current_time - this->last_speaker_audio_time_;
@@ -110,6 +120,7 @@ void VoiceAssistantWebSocket::start() {
   this->connection_count_++;
   this->connect_millis_ = 0;
   this->audio_chunks_sent_ = 0;
+  this->starting_millis_ = millis();
   ESP_LOGI(TAG, "[diag] start conn #%u heap=%u", (unsigned) this->connection_count_,
            (unsigned) esp_get_free_heap_size());
 
@@ -461,11 +472,11 @@ void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t e
 
     case WEBSOCKET_EVENT_CONNECTED:
       this->connect_millis_ = millis();
-      ESP_LOGI(TAG, "WebSocket connected, state: RUNNING");
+      ESP_LOGI(TAG, "WebSocket connected, state: STARTING (waiting for ready)");
       ESP_LOGI(TAG, "[diag] connected conn #%u heap=%u",
                (unsigned) this->connection_count_,
                (unsigned) esp_get_free_heap_size());
-      this->state_ = VOICE_ASSISTANT_WEBSOCKET_RUNNING;
+      this->state_ = VOICE_ASSISTANT_WEBSOCKET_STARTING;
       if (this->state_callback_) {
         this->state_callback_(this->state_);
       }
@@ -484,8 +495,30 @@ void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t e
                                      event_data->data_len);
       } else if (event_data->op_code == 0x01) {
         std::string message((const char *) event_data->data_ptr, event_data->data_len);
-        if (message.find("\"type\":\"interrupt\"") != std::string::npos ||
-            message.find("\"type\": \"interrupt\"") != std::string::npos) {
+        if (message.find("\"type\":\"ready\"") != std::string::npos ||
+            message.find("\"type\": \"ready\"") != std::string::npos) {
+          if (this->state_ == VOICE_ASSISTANT_WEBSOCKET_STARTING) {
+            this->state_ = VOICE_ASSISTANT_WEBSOCKET_RUNNING;
+            if (this->state_callback_) {
+              this->state_callback_(this->state_);
+            }
+            this->ready_trigger_.trigger();
+            ESP_LOGI(TAG, "Ready received, state: RUNNING");
+          }
+        } else if (message.find("\"type\":\"phase\"") != std::string::npos ||
+                   message.find("\"type\": \"phase\"") != std::string::npos) {
+          if (message.find("\"phase\":\"thinking\"") != std::string::npos ||
+              message.find("\"phase\": \"thinking\"") != std::string::npos) {
+            this->thinking_trigger_.trigger();
+          } else if (message.find("\"phase\":\"replying\"") != std::string::npos ||
+                     message.find("\"phase\": \"replying\"") != std::string::npos) {
+            this->replying_trigger_.trigger();
+          } else if (message.find("\"phase\":\"listening\"") != std::string::npos ||
+                     message.find("\"phase\": \"listening\"") != std::string::npos) {
+            this->listening_trigger_.trigger();
+          }
+        } else if (message.find("\"type\":\"interrupt\"") != std::string::npos ||
+                   message.find("\"type\": \"interrupt\"") != std::string::npos) {
           if (this->speaker_ != nullptr) {
             this->speaker_->stop();
           }

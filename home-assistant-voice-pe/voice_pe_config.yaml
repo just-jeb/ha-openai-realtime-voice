@@ -732,29 +732,29 @@ script:
                 then:
                   light.turn_on: led_ring
 
-  # Script executed when the voice assistant is waiting for a command
+  # Script executed when the voice assistant is waiting (connecting to OpenAI) - yellow
   - id: control_leds_voice_assistant_waiting_for_command_phase
     then:
       - light.turn_on:
           brightness: !lambda return max( id(led_ring).current_values.get_brightness() , 0.2f );
-          red: 0%
-          green: 0%
-          blue: 100%
+          red: 100%
+          green: 70%
+          blue: 0%
           id: voice_assistant_leds
           effect: "Waiting for Command"
 
-  # Script executed when the voice assistant is listening to a command
+  # Script executed when the voice assistant is listening (ready to speak) - green
   - id: control_leds_voice_assistant_listening_for_command_phase
     then:
       - light.turn_on:
           brightness: !lambda return max( id(led_ring).current_values.get_brightness() , 0.2f );
           red: 0%
-          green: 0%
-          blue: 100%
+          green: 100%
+          blue: 0%
           id: voice_assistant_leds
           effect: "Listening For Command"
 
-  # Script executed when the voice assistant is thinking
+  # Script executed when the voice assistant is thinking - blue
   - id: control_leds_voice_assistant_thinking_phase
     then:
       - light.turn_on:
@@ -765,13 +765,13 @@ script:
           id: voice_assistant_leds
           effect: "Thinking"
 
-  # Script executed when the voice assistant is replying
+  # Script executed when the voice assistant is replying - cyan
   - id: control_leds_voice_assistant_replying_phase
     then:
       - light.turn_on:
           brightness: !lambda return max( id(led_ring).current_values.get_brightness() , 0.2f );
           red: 0%
-          green: 0%
+          green: 100%
           blue: 100%
           id: voice_assistant_leds
           effect: "Replying"
@@ -1093,16 +1093,28 @@ voice_assistant_websocket:
   # Audio output - server sends 24kHz; ESPHome resampler converts 24kHz -> 48kHz for I2S
   speaker: voice_resampling_speaker
   
-  # State callbacks for LED control
+  # State callbacks for LED control (phase IDs: 2=waiting, 3=listening, 4=thinking, 5=replying)
   on_connected:
     - lambda: id(init_in_progress) = false;
-    - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};  # Set to idle to show blue pulse (only if running)
+    - lambda: id(voice_assistant_phase) = ${voice_assist_waiting_for_command_phase_id};  # Yellow: connecting to OpenAI
     - script.execute: control_leds
     # Apply ducking to media when voice assistant starts
     - mixer_speaker.apply_ducking:
         id: media_mixing_input
         decibel_reduction: 20  # Lower media volume by 20dB when voice assistant is active
         duration: 0.0s
+  on_ready:
+    - lambda: id(voice_assistant_phase) = ${voice_assist_listening_for_command_phase_id};  # Green: ready, speak now
+    - script.execute: control_leds
+  on_thinking:
+    - lambda: id(voice_assistant_phase) = ${voice_assist_thinking_phase_id};  # Blue: processing
+    - script.execute: control_leds
+  on_replying:
+    - lambda: id(voice_assistant_phase) = ${voice_assist_replying_phase_id};  # Cyan: bot speaking
+    - script.execute: control_leds
+  on_listening:
+    - lambda: id(voice_assistant_phase) = ${voice_assist_listening_for_command_phase_id};  # Green: your turn again
+    - script.execute: control_leds
   on_disconnected:
     - lambda: id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};
     - script.execute: control_leds
