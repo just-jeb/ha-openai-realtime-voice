@@ -48,6 +48,48 @@ void VoiceAssistantWebSocket::setup() {
 }
 
 void VoiceAssistantWebSocket::loop() {
+  // Drain deferred triggers (set by WS event handler in library task; run in main loop)
+  uint32_t triggers = this->pending_triggers_;
+  this->pending_triggers_ = 0;
+  const char *stop_reason = this->pending_stop_reason_;
+  this->pending_stop_reason_ = nullptr;
+
+  if (triggers & TRIGGER_CONNECTED) {
+    if (this->state_callback_) {
+      this->state_callback_(this->state_);
+    }
+    this->connected_trigger_.trigger();
+  }
+  if (triggers & TRIGGER_READY) {
+    if (this->state_callback_) {
+      this->state_callback_(this->state_);
+    }
+    this->ready_trigger_.trigger();
+  }
+  if (triggers & TRIGGER_THINKING) {
+    this->thinking_trigger_.trigger();
+  }
+  if (triggers & TRIGGER_REPLYING) {
+    this->replying_trigger_.trigger();
+  }
+  if (triggers & TRIGGER_LISTENING) {
+    this->listening_trigger_.trigger();
+  }
+  if (triggers & TRIGGER_SEARCHING) {
+    this->searching_trigger_.trigger();
+  }
+  if (triggers & TRIGGER_DISCONNECTED) {
+    this->disconnected_trigger_.trigger();
+    this->stop(stop_reason ? stop_reason : "ws_disconnected");
+  }
+  if (triggers & TRIGGER_ERROR) {
+    this->error_trigger_.trigger();
+    this->stop(stop_reason ? stop_reason : "ws_error");
+  }
+  if (triggers & TRIGGER_STOPPED) {
+    this->stop(stop_reason ? stop_reason : "action");
+  }
+
   if (this->speaker_ != nullptr && this->speaker_->is_running() && !this->audio_queue_.empty()) {
     const std::vector<uint8_t> &queued_data = this->audio_queue_.front();
     size_t queued_written = this->speaker_->play(queued_data.data(), queued_data.size());
@@ -469,6 +511,13 @@ void VoiceAssistantWebSocket::websocket_event_handler_(void *handler_args,
 
 void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t event_id,
                                                       esp_websocket_event_data_t *event_data) {
+  // Diagnostic: log non-audio events so we can see ordering (skip binary audio to avoid spam)
+  if (event_id != WEBSOCKET_EVENT_DATA || event_data == nullptr ||
+      event_data->op_code != 0x02) {
+    ESP_LOGI(TAG, "[diag] WS event id=%d state=%d",
+             (int) event_id, (int) this->state_);
+  }
+
   switch (event_id) {
     case WEBSOCKET_EVENT_BEFORE_CONNECT:
       ESP_LOGI(TAG, "WebSocket connection attempt starting...");
@@ -481,16 +530,13 @@ void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t e
                (unsigned) this->connection_count_,
                (unsigned) esp_get_free_heap_size());
       this->state_ = VOICE_ASSISTANT_WEBSOCKET_STARTING;
-      if (this->state_callback_) {
-        this->state_callback_(this->state_);
-      }
-      this->connected_trigger_.trigger();
+      this->pending_triggers_ |= TRIGGER_CONNECTED;
       break;
 
     case WEBSOCKET_EVENT_DISCONNECTED:
       ESP_LOGW(TAG, "WebSocket disconnected");
-      this->disconnected_trigger_.trigger();
-      this->stop("ws_disconnected");
+      this->pending_stop_reason_ = "ws_disconnected";
+      this->pending_triggers_ |= TRIGGER_DISCONNECTED;
       break;
 
     case WEBSOCKET_EVENT_DATA:
@@ -506,35 +552,33 @@ void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t e
             message.find("\"type\": \"ready\"") != std::string::npos) {
           if (this->state_ == VOICE_ASSISTANT_WEBSOCKET_STARTING) {
             this->state_ = VOICE_ASSISTANT_WEBSOCKET_RUNNING;
-            if (this->state_callback_) {
-              this->state_callback_(this->state_);
-            }
-            this->ready_trigger_.trigger();
+            this->pending_triggers_ |= TRIGGER_READY;
             ESP_LOGI(TAG, "Ready received, state: RUNNING");
           }
         } else if (message.find("\"type\":\"phase\"") != std::string::npos ||
                    message.find("\"type\": \"phase\"") != std::string::npos) {
           if (message.find("\"phase\":\"thinking\"") != std::string::npos ||
               message.find("\"phase\": \"thinking\"") != std::string::npos) {
-            this->thinking_trigger_.trigger();
+            this->pending_triggers_ |= TRIGGER_THINKING;
             ESP_LOGI(TAG, "Phase: thinking");
           } else if (message.find("\"phase\":\"replying\"") != std::string::npos ||
                      message.find("\"phase\": \"replying\"") != std::string::npos) {
             this->searching_phase_active_ = false;
-            this->replying_trigger_.trigger();
+            this->last_speaker_audio_time_ = millis();
+            this->pending_triggers_ |= TRIGGER_REPLYING;
             ESP_LOGI(TAG, "Phase: replying, searching_active=false, auto_stop_threshold=%u ms",
                      (unsigned) this->auto_stop_inactivity_ms_);
           } else if (message.find("\"phase\":\"listening\"") != std::string::npos ||
                      message.find("\"phase\": \"listening\"") != std::string::npos) {
             this->searching_phase_active_ = false;
-            this->listening_trigger_.trigger();
+            this->pending_triggers_ |= TRIGGER_LISTENING;
             ESP_LOGI(TAG, "Phase: listening, searching_active=false, auto_stop_threshold=%u ms",
                      (unsigned) this->auto_stop_inactivity_ms_);
           } else if (message.find("\"phase\":\"searching\"") != std::string::npos ||
                      message.find("\"phase\": \"searching\"") != std::string::npos) {
             this->searching_phase_active_ = true;
             this->last_speaker_audio_time_ = millis();
-            this->searching_trigger_.trigger();
+            this->pending_triggers_ |= TRIGGER_SEARCHING;
             ESP_LOGI(TAG, "Phase: searching, searching_active=true, auto_stop_threshold=%u ms",
                      (unsigned) AUTO_STOP_SEARCHING_MS);
           }
@@ -546,7 +590,8 @@ void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t e
         } else if (message.find("\"type\":\"disconnect\"") != std::string::npos ||
                    message.find("\"type\": \"disconnect\"") != std::string::npos) {
           ESP_LOGI(TAG, "Disconnect message received from server");
-          this->stop("disconnect_message");
+          this->pending_stop_reason_ = "disconnect_message";
+          this->pending_triggers_ |= TRIGGER_STOPPED;
         } else {
           ESP_LOGW(TAG, "Unknown text message len=%zu: %.80s",
                    (size_t) message.size(), message.c_str());
@@ -569,8 +614,8 @@ void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t e
       } else {
         ESP_LOGE(TAG, "WebSocket error (no event data)");
       }
-      this->error_trigger_.trigger();
-      this->stop("ws_error");
+      this->pending_stop_reason_ = "ws_error";
+      this->pending_triggers_ |= TRIGGER_ERROR;
       break;
 
     default:

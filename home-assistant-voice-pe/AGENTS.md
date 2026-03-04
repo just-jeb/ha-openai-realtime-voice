@@ -23,14 +23,21 @@ own output from being picked up by the mic and causing echo/feedback
 loops. Hardware AEC handles some of this, but blocking at the source is
 more reliable.
 
+**Deferred triggers.** The WebSocket event handler runs in the ESP-IDF
+library's internal task, not the ESPHome main loop. To avoid blocking the
+receive loop (which could prevent the ready message from being processed
+on first connection), the handler only sets a bitmask of pending triggers;
+`loop()` drains them and runs YAML automations (LEDs, ducking, scripts)
+in the main loop where hardware access is safe.
+
 **Auto-stop on inactivity.** If no speaker audio is received for the
 configured timeout (default 20s, configurable via `auto_stop_timeout` in
 YAML), the session auto-stops. This is tracked by speaker output only,
 not mic input, because the mic always picks up ambient noise. When the
 server sends the `searching` phase (background tool running), the client
 uses a 60s timeout instead so web search can complete without killing
-the session. The timer resets when speaker audio is received or when
-`searching` is received.
+the session. The timer resets when speaker audio is received, when
+`searching` is received, or when `replying` is received (audio is about to arrive).
 
 **Interrupt via wake word.** If the bot is speaking and the user says
 a wake word, the client sends `{"type":"interrupt"}` and clears its
@@ -89,7 +96,8 @@ The `voice_assistant_websocket` component lives under
 - `.h` — State enum (IDLE, STARTING, RUNNING), class declaration,
   constants, action/condition template classes.
 - `.cpp` — WebSocket lifecycle, audio processing, resampling, event
-  handling, background cleanup task, finite send timeouts (no blocking).
+  handling (handler sets pending-trigger flags; `loop()` drains and runs
+  triggers), background cleanup task, finite send timeouts (no blocking).
 
 When adding a new action or condition, it must be registered in
 `__init__.py`, `.h`, and `.cpp`.

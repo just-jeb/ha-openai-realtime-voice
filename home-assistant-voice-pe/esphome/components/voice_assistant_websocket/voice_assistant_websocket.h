@@ -95,6 +95,19 @@ class VoiceAssistantWebSocket : public Component {
   Trigger<> listening_trigger_{};
   Trigger<> searching_trigger_{};
 
+  // Deferred triggers: set in WS event handler (library task), drained in loop() (main loop)
+  static const uint32_t TRIGGER_CONNECTED = 1 << 0;
+  static const uint32_t TRIGGER_READY = 1 << 1;
+  static const uint32_t TRIGGER_THINKING = 1 << 2;
+  static const uint32_t TRIGGER_REPLYING = 1 << 3;
+  static const uint32_t TRIGGER_LISTENING = 1 << 4;
+  static const uint32_t TRIGGER_SEARCHING = 1 << 5;
+  static const uint32_t TRIGGER_DISCONNECTED = 1 << 6;
+  static const uint32_t TRIGGER_ERROR = 1 << 7;
+  static const uint32_t TRIGGER_STOPPED = 1 << 8;  // e.g. server sent disconnect message
+  volatile uint32_t pending_triggers_{0};
+  const char *pending_stop_reason_{nullptr};
+
   bool searching_phase_active_{false};
   static const uint32_t AUTO_STOP_SEARCHING_MS = 60000;
 

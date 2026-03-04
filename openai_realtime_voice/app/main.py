@@ -234,6 +234,7 @@ class RealtimeVoiceBridge:
         end_reason: dict,
         response_idle: asyncio.Event,
         pending_tool_tasks: set,
+        in_flight_searches: dict,
     ) -> None:
         """Forward OpenAI events to ESP32; audio goes through paced queue. Sends phase
         messages (thinking/replying/listening/searching) for client LED feedback."""
@@ -309,7 +310,7 @@ class RealtimeVoiceBridge:
                             else:
                                 task = asyncio.create_task(
                                     self._run_tool_in_background(
-                                        openai_ws, item, response_idle
+                                        openai_ws, item, response_idle, in_flight_searches
                                     )
                                 )
                                 pending_tool_tasks.add(task)
@@ -321,7 +322,10 @@ class RealtimeVoiceBridge:
                             "Phase decision: had_audio=%s, pending_tools=%d -> %s",
                             had_audio, len(pending_tool_tasks), phase,
                         )
-                        await self._send_phase(client_ws, phase)
+                        if had_audio:
+                            await audio_queue.put(("phase", phase))  # Sequenced after audio
+                        else:
+                            await self._send_phase(client_ws, phase)  # No audio, send now
                     had_audio = False
 
                 elif ev_type == "error":
@@ -381,6 +385,13 @@ class RealtimeVoiceBridge:
                         buffer.clear()
                     bytes_sent = 0
                     start_time = None
+                    continue
+
+                if isinstance(chunk, tuple) and chunk[0] == "phase":
+                    if buffer:
+                        await client_ws.send(bytes(buffer))
+                        buffer.clear()
+                    await self._send_phase(client_ws, chunk[1])
                     continue
 
                 if not first_audio_to_client[0]:
@@ -466,10 +477,11 @@ class RealtimeVoiceBridge:
         openai_ws,
         item: dict,
         response_idle: asyncio.Event,
+        in_flight_searches: dict,
     ) -> None:
         """Run a non-session-ending tool (e.g. search_web) without blocking the event loop.
         Waits for response_idle before sending tool result so we don't send response.create
-        while the model is mid-speech."""
+        while the model is mid-speech. Deduplicates in-flight search_web by query."""
         name = item.get("name")
         call_id = item.get("call_id")
         if not call_id:
@@ -489,33 +501,65 @@ class RealtimeVoiceBridge:
                 output = json.dumps({"error": "Missing query"})
                 logger.warning("search_web called with empty query")
             else:
-                search_start = time.monotonic()
+                dedup_key = f"{name}:{query}"
+                if dedup_key in in_flight_searches:
+                    logger.info("Dedup: reusing in-flight search for '%s'", query)
+                    output = await in_flight_searches[dedup_key]
+                    await response_idle.wait()
+                    await self._send_tool_result_output_only(openai_ws, call_id, output)
+                    return
+                future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
+                in_flight_searches[dedup_key] = future
                 try:
-                    text = await self._web_search(query)
-                    duration_s = time.monotonic() - search_start
-                    output = json.dumps({"result": text})
-                    logger.info("Web search completed in %.1fs, result %d chars", duration_s, len(text))
-                except Exception as e:
-                    duration_s = time.monotonic() - search_start
-                    err_msg = f"{type(e).__name__}: {e!s}" if str(e) else type(e).__name__
-                    if isinstance(e, httpx.HTTPStatusError):
-                        try:
-                            body = e.response.text
-                            err_msg = f"{err_msg} body=%s" % (body[:200] + "…" if len(body) > 200 else body)
-                        except Exception:
-                            pass
-                    logger.warning("Web search failed after %.1fs: %s", duration_s, err_msg, exc_info=True)
-                    output = json.dumps({"error": str(e) or type(e).__name__})
+                    search_start = time.monotonic()
+                    try:
+                        text = await self._web_search(query)
+                        duration_s = time.monotonic() - search_start
+                        output = json.dumps({"result": text})
+                        logger.info(
+                            "Web search completed in %.1fs, result %d chars",
+                            duration_s, len(text),
+                        )
+                    except Exception as e:
+                        duration_s = time.monotonic() - search_start
+                        err_msg = f"{type(e).__name__}: {e!s}" if str(e) else type(e).__name__
+                        if isinstance(e, httpx.HTTPStatusError):
+                            try:
+                                body = e.response.text
+                                err_msg = f"{err_msg} body=%s" % (
+                                    body[:200] + "…" if len(body) > 200 else body
+                                )
+                            except Exception:
+                                pass
+                        logger.warning(
+                            "Web search failed after %.1fs: %s", duration_s, err_msg,
+                            exc_info=True,
+                        )
+                        output = json.dumps({"error": str(e) or type(e).__name__})
+                    future.set_result(output)
+                finally:
+                    in_flight_searches.pop(dedup_key, None)
         else:
             output = json.dumps({"error": f"Unknown tool: {name}"})
 
         await response_idle.wait()
         result_preview = "ok" if "error" not in output else "error"
-        logger.info("Sending tool result: call_id=%s %s", call_id[:16] + "…" if len(call_id) > 16 else call_id, result_preview)
+        logger.info(
+            "Sending tool result: call_id=%s %s",
+            call_id[:16] + "…" if len(call_id) > 16 else call_id,
+            result_preview,
+        )
         await self._send_tool_result(openai_ws, call_id, output)
 
     async def _send_tool_result(self, openai_ws, call_id: str, output: str) -> None:
         """Send function_call_output item and trigger response.create."""
+        await self._send_tool_result_output_only(openai_ws, call_id, output)
+        await openai_ws.send(json.dumps({"type": "response.create"}))
+
+    async def _send_tool_result_output_only(
+        self, openai_ws, call_id: str, output: str
+    ) -> None:
+        """Send only the function_call_output item (no response.create). Used for dedup."""
         await openai_ws.send(
             json.dumps({
                 "type": "conversation.item.create",
@@ -526,7 +570,6 @@ class RealtimeVoiceBridge:
                 },
             })
         )
-        await openai_ws.send(json.dumps({"type": "response.create"}))
 
     async def _web_search(self, query: str) -> str:
         """Call OpenAI Responses API with web search."""
@@ -584,6 +627,7 @@ class RealtimeVoiceBridge:
             response_idle = asyncio.Event()
             response_idle.set()
             pending_tool_tasks = set()
+            in_flight_searches: dict[str, asyncio.Future[str]] = {}
 
             async def ready_retry_loop() -> None:
                 for attempt in range(3):
@@ -611,6 +655,7 @@ class RealtimeVoiceBridge:
                     end_reason,
                     response_idle,
                     pending_tool_tasks,
+                    in_flight_searches,
                 )
             )
             sender_task = asyncio.create_task(

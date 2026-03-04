@@ -402,7 +402,16 @@ async def test_phase_searching_with_function_call():
             end_reason,
             response_idle,
             pending_tool_tasks,
+            {},
         )
+    # Post-response phase "searching" is queued; drain it
+    while not audio_queue.empty():
+        try:
+            item = audio_queue.get_nowait()
+            if isinstance(item, tuple) and item[0] == "phase":
+                phases_sent.append(item[1])
+        except asyncio.QueueEmpty:
+            break
 
     assert phases_sent == ["replying", "searching"], (
         f"Expected [replying, searching], got {phases_sent}"
@@ -443,7 +452,16 @@ async def test_phase_listening_without_function_call():
         end_reason,
         response_idle,
         pending_tool_tasks,
+        {},
     )
+    # Post-response phase "listening" is queued; drain it
+    while not audio_queue.empty():
+        try:
+            item = audio_queue.get_nowait()
+            if isinstance(item, tuple) and item[0] == "phase":
+                phases_sent.append(item[1])
+        except asyncio.QueueEmpty:
+            break
 
     assert phases_sent == ["replying", "listening"], (
         f"Expected [replying, listening], got {phases_sent}"
