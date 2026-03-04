@@ -497,7 +497,10 @@ void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t e
       if (event_data->op_code == 0x02) {
         this->process_received_audio_(reinterpret_cast<const uint8_t *>(event_data->data_ptr),
                                      event_data->data_len);
-      } else if (event_data->op_code == 0x01) {
+      } else if (event_data->data_len > 0 && event_data->data_ptr != nullptr) {
+        ESP_LOGI(TAG, "WS text event: op=0x%02x len=%d off=%d total=%d",
+                 event_data->op_code, event_data->data_len,
+                 event_data->payload_offset, event_data->payload_len);
         std::string message((const char *) event_data->data_ptr, event_data->data_len);
         if (message.find("\"type\":\"ready\"") != std::string::npos ||
             message.find("\"type\": \"ready\"") != std::string::npos) {
@@ -544,8 +547,8 @@ void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t e
                    message.find("\"type\": \"disconnect\"") != std::string::npos) {
           ESP_LOGI(TAG, "Disconnect message received from server");
           this->stop("disconnect_message");
-        } else if (this->state_ == VOICE_ASSISTANT_WEBSOCKET_STARTING) {
-          ESP_LOGW(TAG, "Unexpected text in STARTING, len=%zu: %.80s",
+        } else {
+          ESP_LOGW(TAG, "Unknown text message len=%zu: %.80s",
                    (size_t) message.size(), message.c_str());
         }
       }
