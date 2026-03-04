@@ -621,14 +621,19 @@ class RealtimeVoiceBridge:
             ready_retry_task = asyncio.create_task(ready_retry_loop())
 
             finished, pending = await asyncio.wait(
-                [client_task, openai_task, sender_task, ready_retry_task],
+                [client_task, openai_task, sender_task],
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
             for task in pending:
                 task.cancel()
+            ready_retry_task.cancel()
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
+            try:
+                await ready_retry_task
+            except asyncio.CancelledError:
+                pass
 
             for task in finished:
                 if task.cancelled():

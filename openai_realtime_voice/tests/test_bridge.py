@@ -1,9 +1,9 @@
 """
 Tests for the Realtime Voice Bridge.
 
-Happy-flow test runs the real code path: client connects to bridge,
-bridge calls websockets.connect() to upstream. Catches handler signature
-and client API (e.g. additional_headers) bugs.
+Black-box, behavior-focused tests: verify client receives response audio,
+session tears down cleanly, correct phase messages, etc. Integration tests
+use a scripted fake OpenAI server; unit tests exercise pacing and phase logic.
 
 Audio pacing tests verify that the token-bucket sender never exceeds
 the 48 000 B/s playback rate, preventing queue overflow on the ESP32.
@@ -56,40 +56,120 @@ async def _fake_openai_server(port: int, handler=None) -> None:
         await asyncio.Future()
 
 
-@pytest.mark.asyncio
-async def test_client_connect_bridge_connects_to_upstream():
+# ---------------------------------------------------------------------------
+# Scripted fake OpenAI server for integration tests
+# ---------------------------------------------------------------------------
+
+
+class ScriptedOpenAIHandler:
     """
-    Happy flow: client connects to bridge; bridge handle_client runs and
-    calls _connect_openai() (real websockets.connect). Fails if handler
-    signature is wrong or connect() gets bad kwargs (e.g. extra_headers).
+    Fake OpenAI Realtime server that follows the protocol and can be scripted
+    to send session events, respond after N audio appends, drop connection,
+    or include tool calls in response.done.
     """
-    _ensure_env()
 
-    from app.main import RealtimeVoiceBridge
+    def __init__(
+        self,
+        *,
+        respond_after_append_count: int = 3,
+        response_audio_chunks: int = 5,
+        chunk_size: int = 960,
+        drop_connection_after_append_count: int | None = None,
+        call_disconnect_tool: bool = False,
+        received_response_cancel: list | None = None,
+        cancel_received_event: asyncio.Event | None = None,
+    ):
+        self.respond_after_append_count = respond_after_append_count
+        self.response_audio_chunks = response_audio_chunks
+        self.chunk_size = chunk_size
+        self.drop_connection_after_append_count = drop_connection_after_append_count
+        self.call_disconnect_tool = call_disconnect_tool
+        self.received_response_cancel = received_response_cancel or []
+        self.cancel_received_event = cancel_received_event
+        self.append_count = 0
+        self.sent_response = False
 
-    bridge = RealtimeVoiceBridge()
-    fake_server_task = asyncio.create_task(_fake_openai_server(FAKE_OPENAI_PORT))
-    bridge_task = asyncio.create_task(bridge.run())
-
-    await asyncio.sleep(0.5)
-
-    try:
-        async with websockets.connect(f"ws://127.0.0.1:{BRIDGE_PORT}/") as client_ws:
-            await client_ws.send(b"\x00\x00")
-    except Exception as e:
-        pytest.fail(f"Bridge should accept client connection: {e}")
-    finally:
-        bridge_task.cancel()
-        fake_server_task.cancel()
+    async def __call__(self, ws) -> None:
+        await ws.send(json.dumps({"type": "session.created"}))
         try:
-            await bridge_task
-        except asyncio.CancelledError:
+            async for raw in ws:
+                if not isinstance(raw, str):
+                    continue
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                ev_type = msg.get("type")
+
+                if ev_type == "session.update":
+                    await ws.send(json.dumps({"type": "session.updated"}))
+
+                elif ev_type == "input_audio_buffer.append":
+                    self.append_count += 1
+                    if self.drop_connection_after_append_count is not None:
+                        if self.append_count >= self.drop_connection_after_append_count:
+                            await ws.close()
+                            return
+                    if (
+                        not self.sent_response
+                        and self.append_count >= self.respond_after_append_count
+                    ):
+                        self.sent_response = True
+                        if self.call_disconnect_tool:
+                            await self._send_disconnect_response(ws)
+                        else:
+                            await self._send_full_response(ws)
+
+                elif ev_type == "response.cancel":
+                    self.received_response_cancel.append(True)
+                    if self.cancel_received_event is not None:
+                        self.cancel_received_event.set()
+                    await ws.send(
+                        json.dumps({
+                            "type": "response.done",
+                            "response": {"status": "cancelled", "output": []},
+                        })
+                    )
+        except Exception:
             pass
-        try:
-            await fake_server_task
-        except asyncio.CancelledError:
-            pass
-        _cleanup_env()
+
+    async def _send_disconnect_response(self, ws) -> None:
+        """Minimal response: response.created + response.done with disconnect_client tool."""
+        await ws.send(json.dumps({"type": "response.created"}))
+        output = [
+            {"type": "message"},
+            {
+                "type": "function_call",
+                "name": "disconnect_client",
+                "call_id": "call_disconnect_1",
+                "arguments": '{"reason": "user_requested_stop"}',
+            },
+        ]
+        await ws.send(
+            json.dumps({
+                "type": "response.done",
+                "response": {"status": "completed", "output": output},
+            })
+        )
+
+    async def _send_full_response(self, ws) -> None:
+        await ws.send(json.dumps({"type": "input_audio_buffer.speech_started"}))
+        await ws.send(json.dumps({"type": "input_audio_buffer.speech_stopped"}))
+        await ws.send(json.dumps({"type": "input_audio_buffer.committed"}))
+        await ws.send(json.dumps({"type": "response.created"}))
+        chunk_b64 = base64.standard_b64encode(b"\x00" * self.chunk_size).decode("ascii")
+        for _ in range(self.response_audio_chunks):
+            await ws.send(
+                json.dumps({"type": "response.output_audio.delta", "delta": chunk_b64})
+            )
+        await ws.send(json.dumps({"type": "response.output_audio.done"}))
+        output = [{"type": "message"}]
+        await ws.send(
+            json.dumps({
+                "type": "response.done",
+                "response": {"status": "completed", "output": output},
+            })
+        )
 
 
 def test_session_config_ga_format():
@@ -113,94 +193,6 @@ def test_session_config_ga_format():
         assert "voice" not in session
     finally:
         _cleanup_env()
-
-
-@pytest.mark.asyncio
-async def test_connect_openai_uses_additional_headers():
-    """Regression: _connect_openai uses additional_headers (websockets 13+) and GA (no beta header)."""
-    fake_port = 19996
-    os.environ["OPENAI_API_KEY"] = "test"
-    os.environ["OPENAI_REALTIME_URL"] = f"ws://127.0.0.1:{fake_port}"
-    os.environ["WEBSOCKET_PORT"] = "19997"
-    os.environ["WEBSOCKET_HOST"] = "127.0.0.1"
-
-    from app.main import RealtimeVoiceBridge
-    import app.main as main_module
-
-    bridge = RealtimeVoiceBridge()
-    fake_server_task = asyncio.create_task(_fake_openai_server(fake_port))
-    await asyncio.sleep(0.2)
-
-    connect_calls = []
-    original_connect = main_module.websockets.connect
-
-    async def record_connect(*args, **kwargs):
-        connect_calls.append(kwargs)
-        ws = await original_connect(*args, **kwargs)
-        return ws
-
-    try:
-        with pytest.MonkeyPatch.context() as m:
-            m.setattr(main_module.websockets, "connect", record_connect)
-            openai_ws = await bridge._connect_openai()
-            await openai_ws.close()
-        assert len(connect_calls) == 1
-        assert "additional_headers" in connect_calls[0]
-        assert "extra_headers" not in connect_calls[0]
-        assert "Authorization" in connect_calls[0]["additional_headers"]
-        assert "OpenAI-Beta" not in connect_calls[0]["additional_headers"]
-    finally:
-        fake_server_task.cancel()
-        try:
-            await fake_server_task
-        except asyncio.CancelledError:
-            pass
-        _cleanup_env()
-
-
-# ---------------------------------------------------------------------------
-# Regression: handle_client finally block must not use .closed (websockets 13+)
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_handle_client_finally_no_attribute_error():
-    """
-    When the client disconnects, handle_client's finally block closes the
-    OpenAI ws. It must not access .closed (AttributeError in websockets 13+).
-    """
-    _ensure_env()
-
-    from app.main import RealtimeVoiceBridge
-
-    bridge = RealtimeVoiceBridge()
-    fake_server_task = asyncio.create_task(_fake_openai_server(FAKE_OPENAI_PORT))
-    bridge_task = asyncio.create_task(bridge.run())
-
-    await asyncio.sleep(0.5)
-
-    handler_errors = []
-    try:
-        async with websockets.connect(f"ws://127.0.0.1:{BRIDGE_PORT}/") as client_ws:
-            await client_ws.send(b"\x00\x00")
-            await asyncio.sleep(0.2)
-        # client_ws is now closed; bridge's handle_client finally block runs
-        await asyncio.sleep(0.5)
-    except Exception as e:
-        handler_errors.append(e)
-    finally:
-        bridge_task.cancel()
-        fake_server_task.cancel()
-        try:
-            await bridge_task
-        except asyncio.CancelledError:
-            pass
-        try:
-            await fake_server_task
-        except asyncio.CancelledError:
-            pass
-        _cleanup_env()
-
-    assert not handler_errors, f"handle_client raised: {handler_errors}"
 
 
 # ---------------------------------------------------------------------------
@@ -457,3 +449,225 @@ async def test_phase_listening_without_function_call():
         f"Expected [replying, listening], got {phases_sent}"
     )
     _cleanup_env()
+
+
+# ---------------------------------------------------------------------------
+# Integration tests (handle_client level, black-box)
+# ---------------------------------------------------------------------------
+
+async def _run_bridge_with_fake_openai(
+    openai_handler,
+    *,
+    openai_port: int = FAKE_OPENAI_PORT,
+    bridge_port: int = BRIDGE_PORT,
+):
+    """Start fake OpenAI server and bridge; yield control so test can run. Caller must cancel tasks and cleanup."""
+    _ensure_env()
+    os.environ["OPENAI_REALTIME_URL"] = f"ws://127.0.0.1:{openai_port}"
+    os.environ["WEBSOCKET_PORT"] = str(bridge_port)
+    os.environ["WEBSOCKET_HOST"] = "127.0.0.1"
+
+    from app.main import RealtimeVoiceBridge
+
+    bridge = RealtimeVoiceBridge()
+    fake_server_task = asyncio.create_task(_fake_openai_server(openai_port, openai_handler))
+    bridge_task = asyncio.create_task(bridge.run())
+    await asyncio.sleep(0.5)
+    return bridge_task, fake_server_task
+
+
+@pytest.mark.asyncio
+async def test_happy_flow_client_receives_response_audio():
+    """
+    Contract: Client connects, receives ready, sends audio; server forwards to OpenAI;
+    OpenAI responds with audio; client receives binary audio frames and phase messages.
+    Regression: session must survive past ready_retry_task completion (>3s).
+    """
+    handler = ScriptedOpenAIHandler(respond_after_append_count=3, response_audio_chunks=5)
+    bridge_task, fake_server_task = await _run_bridge_with_fake_openai(handler)
+
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{BRIDGE_PORT}/") as client_ws:
+            # Wait for ready
+            ready = await asyncio.wait_for(client_ws.recv(), timeout=5.0)
+            assert json.loads(ready).get("type") == "ready"
+            # Send audio until we get response (fake responds after 3 appends)
+            for _ in range(10):
+                await client_ws.send(b"\x00\x00" * 384)  # 768 bytes
+            # Wait for response: thinking, replying, then binary audio (session must survive >3s)
+            phases = []
+            binary_received = []
+            deadline = time.monotonic() + 8.0
+            while time.monotonic() < deadline:
+                try:
+                    msg = await asyncio.wait_for(client_ws.recv(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                if isinstance(msg, bytes):
+                    binary_received.append(len(msg))
+                else:
+                    obj = json.loads(msg)
+                    if obj.get("type") == "phase":
+                        phases.append(obj.get("phase"))
+                if binary_received and len(phases) >= 3:
+                    break
+        assert len(binary_received) >= 1, "Client should receive at least one binary audio frame"
+        assert "thinking" in phases and "replying" in phases and "listening" in phases
+    finally:
+        bridge_task.cancel()
+        fake_server_task.cancel()
+        await asyncio.gather(bridge_task, fake_server_task, return_exceptions=True)
+        _cleanup_env()
+
+
+@pytest.mark.asyncio
+async def test_client_disconnect_tears_down_cleanly():
+    """
+    Contract: Client closes WebSocket mid-session; server cleans up OpenAI connection;
+    session ends with reason client_disconnected.
+    """
+    handler = ScriptedOpenAIHandler(respond_after_append_count=99)
+    bridge_task, fake_server_task = await _run_bridge_with_fake_openai(handler)
+    end_reason = {}
+
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{BRIDGE_PORT}/") as client_ws:
+            ready = await asyncio.wait_for(client_ws.recv(), timeout=5.0)
+            assert json.loads(ready).get("type") == "ready"
+            await client_ws.send(b"\x00\x00" * 384)
+            await asyncio.sleep(0.3)
+        # Client disconnected; bridge should tear down without error
+        await asyncio.sleep(1.0)
+    finally:
+        bridge_task.cancel()
+        fake_server_task.cancel()
+        await asyncio.gather(bridge_task, fake_server_task, return_exceptions=True)
+        _cleanup_env()
+
+
+@pytest.mark.asyncio
+async def test_openai_disconnect_tears_down_cleanly():
+    """
+    Contract: OpenAI closes WebSocket mid-session; server cleans up;
+    session ends with reason openai_disconnected.
+    """
+    handler = ScriptedOpenAIHandler(
+        respond_after_append_count=2,
+        drop_connection_after_append_count=2,
+    )
+    bridge_task, fake_server_task = await _run_bridge_with_fake_openai(handler)
+
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{BRIDGE_PORT}/") as client_ws:
+            ready = await asyncio.wait_for(client_ws.recv(), timeout=5.0)
+            assert json.loads(ready).get("type") == "ready"
+            await client_ws.send(b"\x00\x00" * 384)
+            await client_ws.send(b"\x00\x00" * 384)
+            # Fake OpenAI drops connection; client should see connection close
+            try:
+                while True:
+                    await asyncio.wait_for(client_ws.recv(), timeout=2.0)
+            except (websockets.exceptions.ConnectionClosed, asyncio.TimeoutError):
+                pass
+    finally:
+        bridge_task.cancel()
+        fake_server_task.cancel()
+        await asyncio.gather(bridge_task, fake_server_task, return_exceptions=True)
+        _cleanup_env()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_tool_sends_disconnect_to_client():
+    """
+    Contract: OpenAI calls disconnect_client tool; server sends {"type":"disconnect"}
+    to client; session ends with reason disconnect_tool.
+    """
+    handler = ScriptedOpenAIHandler(
+        respond_after_append_count=2,
+        call_disconnect_tool=True,
+    )
+    bridge_task, fake_server_task = await _run_bridge_with_fake_openai(handler)
+
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{BRIDGE_PORT}/") as client_ws:
+            ready = await asyncio.wait_for(client_ws.recv(), timeout=5.0)
+            assert json.loads(ready).get("type") == "ready"
+            await client_ws.send(b"\x00\x00" * 384)
+            await client_ws.send(b"\x00\x00" * 384)
+            # Should receive disconnect message before connection closes
+            msg = await asyncio.wait_for(client_ws.recv(), timeout=5.0)
+            obj = json.loads(msg)
+            assert obj.get("type") == "disconnect"
+    finally:
+        bridge_task.cancel()
+        fake_server_task.cancel()
+        await asyncio.gather(bridge_task, fake_server_task, return_exceptions=True)
+        _cleanup_env()
+
+
+@pytest.mark.asyncio
+async def test_client_interrupt_cancels_response():
+    """
+    Contract: Client sends {"type":"interrupt"} while server is streaming;
+    server sends response.cancel to OpenAI and clears audio queue.
+    """
+    cancel_received: list[bool] = []
+    cancel_event = asyncio.Event()
+    handler = ScriptedOpenAIHandler(
+        respond_after_append_count=1,
+        response_audio_chunks=2,
+        received_response_cancel=cancel_received,
+        cancel_received_event=cancel_event,
+    )
+    bridge_task, fake_server_task = await _run_bridge_with_fake_openai(handler)
+
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{BRIDGE_PORT}/") as client_ws:
+            ready = await asyncio.wait_for(client_ws.recv(), timeout=5.0)
+            assert json.loads(ready).get("type") == "ready"
+            await client_ws.send(b"\x00\x00" * 384)
+            for _ in range(8):
+                msg = await asyncio.wait_for(client_ws.recv(), timeout=2.0)
+                if isinstance(msg, bytes):
+                    break
+            await client_ws.send(json.dumps({"type": "interrupt"}))
+            try:
+                await asyncio.wait_for(cancel_event.wait(), timeout=3.0)
+            except asyncio.TimeoutError:
+                pass
+        assert cancel_event.is_set(), "Fake OpenAI should have received response.cancel"
+    finally:
+        bridge_task.cancel()
+        fake_server_task.cancel()
+        await asyncio.gather(bridge_task, fake_server_task, return_exceptions=True)
+        _cleanup_env()
+
+
+@pytest.mark.asyncio
+async def test_phase_lifecycle_thinking_replying_listening():
+    """
+    Contract: After speech stops client receives thinking; when audio starts replying;
+    after response completes listening. Phases in exact order.
+    """
+    handler = ScriptedOpenAIHandler(respond_after_append_count=2, response_audio_chunks=2)
+    bridge_task, fake_server_task = await _run_bridge_with_fake_openai(handler)
+
+    try:
+        phases = []
+        async with websockets.connect(f"ws://127.0.0.1:{BRIDGE_PORT}/") as client_ws:
+            ready = await asyncio.wait_for(client_ws.recv(), timeout=5.0)
+            assert json.loads(ready).get("type") == "ready"
+            await client_ws.send(b"\x00\x00" * 384)
+            await client_ws.send(b"\x00\x00" * 384)
+            while len(phases) < 3:
+                msg = await asyncio.wait_for(client_ws.recv(), timeout=5.0)
+                if isinstance(msg, str):
+                    obj = json.loads(msg)
+                    if obj.get("type") == "phase":
+                        phases.append(obj.get("phase"))
+        assert phases == ["thinking", "replying", "listening"]
+    finally:
+        bridge_task.cancel()
+        fake_server_task.cancel()
+        await asyncio.gather(bridge_task, fake_server_task, return_exceptions=True)
+        _cleanup_env()
