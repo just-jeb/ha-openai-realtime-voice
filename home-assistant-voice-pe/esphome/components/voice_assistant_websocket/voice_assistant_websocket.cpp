@@ -9,6 +9,7 @@
 
 #ifdef USE_ESP_IDF
 #include "esp_system.h"
+#include "esp_log.h"
 #endif
 
 static const char *TAG = "voice_assistant_websocket";
@@ -113,12 +114,45 @@ void VoiceAssistantWebSocket::loop() {
     this->start();
   }
 
+  if (this->state_ == VOICE_ASSISTANT_WEBSOCKET_STARTING && this->connect_millis_ > 0) {
+    uint32_t elapsed = millis() - this->starting_millis_;
+    if (elapsed >= 3000 && elapsed - this->last_ready_diag_millis_ >= 3000) {
+      this->last_ready_diag_millis_ = elapsed;
+      int ws_connected = -1;
+#ifdef USE_ESP_IDF
+      if (this->websocket_client_ != nullptr) {
+        ws_connected = esp_websocket_client_is_connected(this->websocket_client_) ? 1 : 0;
+      }
+#endif
+      ESP_LOGI(TAG, "[diag] waiting for ready: elapsed=%ums ws_connected=%d",
+               (unsigned) elapsed, ws_connected);
+    }
+  }
+
+  // WORKAROUND: The first WebSocket connection after boot consistently fails to
+  // receive DATA events from the ESP-IDF websocket client, even though CONNECTED
+  // fires and the server sends ready messages. Root cause unknown -- diagnostics
+  // (verbose logging for "websocket_client" tag) are in place to investigate.
+  // Auto-retry works because connection #2 always succeeds.
+  // TODO: Remove once the root cause is found and properly fixed.
   if (this->state_ == VOICE_ASSISTANT_WEBSOCKET_STARTING) {
     if (this->starting_millis_ > 0) {
       uint32_t elapsed = millis() - this->starting_millis_;
       if (elapsed > READY_TIMEOUT_MS) {
-        ESP_LOGW(TAG, "Ready timeout (%u ms), stopping", (unsigned) READY_TIMEOUT_MS);
-        this->stop("ready_timeout");
+        if (this->ready_timeout_retries_ < MAX_READY_RETRIES) {
+          this->ready_timeout_retries_++;
+          ESP_LOGW(TAG, "Ready timeout (%u ms), retry %u/%u",
+                   (unsigned) READY_TIMEOUT_MS,
+                   (unsigned) this->ready_timeout_retries_,
+                   (unsigned) MAX_READY_RETRIES);
+          this->stop("ready_timeout_retry");
+          this->pending_start_ = true;
+        } else {
+          ESP_LOGW(TAG, "Ready timeout (%u ms), no retries left, stopping",
+                   (unsigned) READY_TIMEOUT_MS);
+          this->ready_timeout_retries_ = 0;
+          this->stop("ready_timeout");
+        }
       }
     }
   }
@@ -164,6 +198,7 @@ void VoiceAssistantWebSocket::start() {
   this->connection_count_++;
   this->connect_millis_ = 0;
   this->audio_chunks_sent_ = 0;
+  this->ready_timeout_retries_ = 0;  // Reset on explicit start (wake word); NOT reset on retry
   this->starting_millis_ = millis();
   ESP_LOGI(TAG, "[diag] start conn #%u heap=%u", (unsigned) this->connection_count_,
            (unsigned) esp_get_free_heap_size());
@@ -195,6 +230,9 @@ void VoiceAssistantWebSocket::start() {
     this->state_callback_(this->state_);
   }
 
+#ifdef USE_ESP_IDF
+  esp_log_level_set("websocket_client", ESP_LOG_VERBOSE);
+#endif
   this->connect_websocket_();
 }
 

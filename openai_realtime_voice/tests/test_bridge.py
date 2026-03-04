@@ -196,14 +196,14 @@ def test_session_config_ga_format():
 
 
 # ---------------------------------------------------------------------------
-# Audio pacing: _audio_sender must not exceed 48 000 B/s
+# Audio pacing: _output_sender must not exceed 48 000 B/s
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_audio_sender_paces_at_realtime_rate():
+async def test_output_sender_paces_at_realtime_rate():
     """
     Feed 2 seconds of audio (96 000 bytes) into the queue all at once.
-    Verify that _audio_sender takes ~2 s to deliver it (not <1 s).
+    Verify that _output_sender takes ~2 s to deliver it (not <1 s).
     """
     _ensure_env()
     from app.main import RealtimeVoiceBridge, BYTES_PER_SEC
@@ -218,7 +218,7 @@ async def test_audio_sender_paces_at_realtime_rate():
             sent_chunks.append(data)
             send_times.append(asyncio.get_event_loop().time())
 
-    audio_queue: asyncio.Queue = asyncio.Queue()
+    output_queue: asyncio.Queue = asyncio.Queue()
     first_audio_to_client = [False]
     end_reason = {}
     fake_ws = FakeClientWs()
@@ -229,11 +229,11 @@ async def test_audio_sender_paces_at_realtime_rate():
 
     # Enqueue all audio at once (simulates OpenAI burst)
     for offset in range(0, total_bytes, chunk_size):
-        await audio_queue.put(audio_data[offset : offset + chunk_size])
-    await audio_queue.put(None)  # sentinel: flush
+        await output_queue.put(audio_data[offset : offset + chunk_size])
+    await output_queue.put(None)  # sentinel: flush
 
     sender_task = asyncio.create_task(
-        bridge._audio_sender(fake_ws, audio_queue, first_audio_to_client, end_reason)
+        bridge._output_sender(fake_ws, output_queue, first_audio_to_client, end_reason)
     )
 
     # Wait for sender to deliver (~2 s); then cancel (sender runs until cancelled)
@@ -262,7 +262,7 @@ async def test_audio_sender_paces_at_realtime_rate():
 
 
 @pytest.mark.asyncio
-async def test_audio_sender_flush_on_sentinel():
+async def test_output_sender_flush_on_sentinel():
     """Partial buffer (< 960 bytes) is flushed when sentinel (None) arrives."""
     _ensure_env()
     from app.main import RealtimeVoiceBridge
@@ -275,17 +275,17 @@ async def test_audio_sender_flush_on_sentinel():
         async def send(self, data):
             sent_chunks.append(data)
 
-    audio_queue: asyncio.Queue = asyncio.Queue()
+    output_queue: asyncio.Queue = asyncio.Queue()
     first_audio_to_client = [False]
     end_reason = {}
 
     # Put a small chunk (less than SEND_CHUNK_SIZE) then sentinel
     small_chunk = b"\x00" * 500
-    await audio_queue.put(small_chunk)
-    await audio_queue.put(None)
+    await output_queue.put(small_chunk)
+    await output_queue.put(None)
 
     sender_task = asyncio.create_task(
-        bridge._audio_sender(FakeClientWs(), audio_queue, first_audio_to_client, end_reason)
+        bridge._output_sender(FakeClientWs(), output_queue, first_audio_to_client, end_reason)
     )
     await asyncio.sleep(0.5)
     sender_task.cancel()
@@ -301,18 +301,18 @@ async def test_audio_sender_flush_on_sentinel():
 
 
 @pytest.mark.asyncio
-async def test_clear_audio_queue_on_interrupt():
-    """_clear_audio_queue drops all pending chunks."""
+async def test_clear_output_queue_on_interrupt():
+    """_clear_output_queue drops all pending chunks."""
     _ensure_env()
     from app.main import RealtimeVoiceBridge
 
-    audio_queue: asyncio.Queue = asyncio.Queue()
+    output_queue: asyncio.Queue = asyncio.Queue()
     for _ in range(20):
-        await audio_queue.put(b"\x00" * 960)
+        await output_queue.put(b"\x00" * 960)
 
-    assert audio_queue.qsize() == 20
-    RealtimeVoiceBridge._clear_audio_queue(audio_queue)
-    assert audio_queue.empty()
+    assert output_queue.qsize() == 20
+    RealtimeVoiceBridge._clear_output_queue(output_queue)
+    assert output_queue.empty()
 
     _cleanup_env()
 
@@ -364,7 +364,7 @@ async def test_phase_searching_with_function_call():
     from app.main import RealtimeVoiceBridge
 
     bridge = RealtimeVoiceBridge()
-    audio_queue: asyncio.Queue = asyncio.Queue()
+    output_queue: asyncio.Queue = asyncio.Queue()
     end_reason = {}
     response_idle = asyncio.Event()
     response_idle.set()
@@ -398,16 +398,16 @@ async def test_phase_searching_with_function_call():
             fake_client_ws,
             fake_openai_ws,
             "test",
-            audio_queue,
+            output_queue,
             end_reason,
             response_idle,
             pending_tool_tasks,
             {},
         )
     # Post-response phase "searching" is queued; drain it
-    while not audio_queue.empty():
+    while not output_queue.empty():
         try:
-            item = audio_queue.get_nowait()
+            item = output_queue.get_nowait()
             if isinstance(item, tuple) and item[0] == "phase":
                 phases_sent.append(item[1])
         except asyncio.QueueEmpty:
@@ -426,7 +426,7 @@ async def test_phase_listening_without_function_call():
     from app.main import RealtimeVoiceBridge
 
     bridge = RealtimeVoiceBridge()
-    audio_queue: asyncio.Queue = asyncio.Queue()
+    output_queue: asyncio.Queue = asyncio.Queue()
     end_reason = {}
     response_idle = asyncio.Event()
     response_idle.set()
@@ -448,16 +448,16 @@ async def test_phase_listening_without_function_call():
         fake_client_ws,
         fake_openai_ws,
         "test",
-        audio_queue,
+        output_queue,
         end_reason,
         response_idle,
         pending_tool_tasks,
         {},
     )
     # Post-response phase "listening" is queued; drain it
-    while not audio_queue.empty():
+    while not output_queue.empty():
         try:
-            item = audio_queue.get_nowait()
+            item = output_queue.get_nowait()
             if isinstance(item, tuple) and item[0] == "phase":
                 phases_sent.append(item[1])
         except asyncio.QueueEmpty:

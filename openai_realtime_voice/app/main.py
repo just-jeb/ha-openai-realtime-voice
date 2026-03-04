@@ -175,7 +175,7 @@ class RealtimeVoiceBridge:
         client_ws,
         openai_ws,
         client_id: str,
-        audio_queue: asyncio.Queue,
+        output_queue: asyncio.Queue,
         first_audio_from_client: list,
         end_reason: dict,
     ) -> None:
@@ -200,7 +200,7 @@ class RealtimeVoiceBridge:
                         data = json.loads(message) if isinstance(message, str) else message
                         if data.get("type") == "interrupt":
                             logger.info("Interrupt received from client")
-                            self._clear_audio_queue(audio_queue)
+                            self._clear_output_queue(output_queue)
                             await openai_ws.send(json.dumps({"type": "response.cancel"}))
                     except (json.JSONDecodeError, TypeError):
                         pass
@@ -230,14 +230,14 @@ class RealtimeVoiceBridge:
         client_ws,
         openai_ws,
         client_id: str,
-        audio_queue: asyncio.Queue,
+        output_queue: asyncio.Queue,
         end_reason: dict,
         response_idle: asyncio.Event,
         pending_tool_tasks: set,
         in_flight_searches: dict,
     ) -> None:
-        """Forward OpenAI events to ESP32; audio goes through paced queue. Sends phase
-        messages (thinking/replying/listening/searching) for client LED feedback."""
+        """Forward OpenAI events to ESP32; audio and phases go through single output queue.
+        Sends phase messages (thinking/replying/listening/searching) for client LED feedback."""
         delta_count = 0
         delta_bytes_total = 0
         sent_replying_phase = False
@@ -257,16 +257,16 @@ class RealtimeVoiceBridge:
                     if delta_b64:
                         if not sent_replying_phase:
                             sent_replying_phase = True
-                            await self._send_phase(client_ws, "replying")
+                            await output_queue.put(("phase", "replying"))
                         audio_bytes = base64.standard_b64decode(delta_b64)
-                        await audio_queue.put(audio_bytes)
+                        await output_queue.put(audio_bytes)
                         delta_count += 1
                         delta_bytes_total += len(audio_bytes)
                         if self.recorder:
                             self.recorder.record_output_audio(audio_bytes)
 
                 elif ev_type == "response.output_audio.done":
-                    await audio_queue.put(None)
+                    await output_queue.put(None)
                     sent_replying_phase = False
                     had_audio = True
                     duration_s = delta_bytes_total / BYTES_PER_SEC if delta_bytes_total else 0
@@ -302,7 +302,7 @@ class RealtimeVoiceBridge:
                         if item.get("type") == "function_call":
                             if item.get("name") == "disconnect_client":
                                 should_stop = await self._handle_tool_call(
-                                    client_ws, openai_ws, item, audio_queue
+                                    client_ws, openai_ws, item, output_queue
                                 )
                                 if should_stop:
                                     end_reason["reason"] = "disconnect_tool"
@@ -322,10 +322,7 @@ class RealtimeVoiceBridge:
                             "Phase decision: had_audio=%s, pending_tools=%d -> %s",
                             had_audio, len(pending_tool_tasks), phase,
                         )
-                        if had_audio:
-                            await audio_queue.put(("phase", phase))  # Sequenced after audio
-                        else:
-                            await self._send_phase(client_ws, phase)  # No audio, send now
+                        await output_queue.put(("phase", phase))
                     had_audio = False
 
                 elif ev_type == "error":
@@ -338,7 +335,7 @@ class RealtimeVoiceBridge:
                     logger.info("OpenAI detected speech start")
                 elif ev_type == "input_audio_buffer.speech_stopped":
                     logger.info("OpenAI detected speech stop")
-                    await self._send_phase(client_ws, "thinking")
+                    await output_queue.put(("phase", "thinking"))
                 elif ev_type == "input_audio_buffer.committed":
                     logger.info("OpenAI audio buffer committed")
                 else:
@@ -360,14 +357,15 @@ class RealtimeVoiceBridge:
             if "reason" not in end_reason:
                 end_reason["reason"] = "openai_disconnected"
 
-    async def _audio_sender(
+    async def _output_sender(
         self,
         client_ws,
-        audio_queue: asyncio.Queue,
+        output_queue: asyncio.Queue,
         first_audio_to_client: list,
         end_reason: dict,
     ) -> None:
-        """Send buffered audio to client at exactly the playback rate (token bucket)."""
+        """Send buffered audio and phase messages to client. Audio paced at playback rate;
+        phases sent in order. Single ordered stream eliminates race conditions."""
         buffer = bytearray()
         bytes_sent = 0
         start_time: Optional[float] = None
@@ -375,7 +373,7 @@ class RealtimeVoiceBridge:
         try:
             while True:
                 try:
-                    chunk = await asyncio.wait_for(audio_queue.get(), timeout=0.1)
+                    chunk = await asyncio.wait_for(output_queue.get(), timeout=0.1)
                 except asyncio.TimeoutError:
                     continue
 
@@ -420,29 +418,29 @@ class RealtimeVoiceBridge:
             if "reason" not in end_reason:
                 end_reason["reason"] = "client_disconnected"
         except Exception as e:
-            logger.error("Error in audio_sender: %s", e, exc_info=True)
+            logger.error("Error in output_sender: %s", e, exc_info=True)
             if "reason" not in end_reason:
-                end_reason["reason"] = "audio_sender_error"
+                end_reason["reason"] = "output_sender_error"
 
     @staticmethod
-    def _clear_audio_queue(audio_queue: asyncio.Queue) -> None:
-        """Drop all pending audio so stale data is never sent after interrupt."""
+    def _clear_output_queue(output_queue: asyncio.Queue) -> None:
+        """Drop all pending output (audio + phases) so stale data is never sent after interrupt."""
         dropped = 0
-        while not audio_queue.empty():
+        while not output_queue.empty():
             try:
-                audio_queue.get_nowait()
+                output_queue.get_nowait()
                 dropped += 1
             except asyncio.QueueEmpty:
                 break
         if dropped:
-            logger.info("Cleared %d chunks from audio queue (interrupt)", dropped)
+            logger.info("Cleared %d chunks from output queue (interrupt)", dropped)
 
     async def _handle_tool_call(
         self,
         client_ws,
         openai_ws,
         item: dict,
-        audio_queue: asyncio.Queue,
+        output_queue: asyncio.Queue,
     ) -> bool:
         """Execute tool. Returns True if session should end (disconnect_client)."""
         name = item.get("name")
@@ -457,7 +455,7 @@ class RealtimeVoiceBridge:
 
         if name == "disconnect_client":
             logger.info("Disconnect tool called, notifying client")
-            self._clear_audio_queue(audio_queue)
+            self._clear_output_queue(output_queue)
             try:
                 await client_ws.send(
                     json.dumps({
@@ -581,7 +579,7 @@ class RealtimeVoiceBridge:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "gpt-5-nano",
+                    "model": "gpt-4.1-mini",
                     "input": query,
                     "tools": [{"type": "web_search"}],
                 },
@@ -611,7 +609,7 @@ class RealtimeVoiceBridge:
         end_reason = {}
         first_audio_from_client = [False]
         first_audio_to_client = [False]
-        audio_queue: asyncio.Queue = asyncio.Queue()
+        output_queue: asyncio.Queue = asyncio.Queue()
         openai_ws = None
 
         try:
@@ -642,7 +640,7 @@ class RealtimeVoiceBridge:
 
             client_task = asyncio.create_task(
                 self._client_to_openai(
-                    client_ws, openai_ws, client_id, audio_queue,
+                    client_ws, openai_ws, client_id, output_queue,
                     first_audio_from_client, end_reason,
                 )
             )
@@ -651,7 +649,7 @@ class RealtimeVoiceBridge:
                     client_ws,
                     openai_ws,
                     client_id,
-                    audio_queue,
+                    output_queue,
                     end_reason,
                     response_idle,
                     pending_tool_tasks,
@@ -659,8 +657,8 @@ class RealtimeVoiceBridge:
                 )
             )
             sender_task = asyncio.create_task(
-                self._audio_sender(
-                    client_ws, audio_queue, first_audio_to_client, end_reason
+                self._output_sender(
+                    client_ws, output_queue, first_audio_to_client, end_reason
                 )
             )
             ready_retry_task = asyncio.create_task(ready_retry_loop())
