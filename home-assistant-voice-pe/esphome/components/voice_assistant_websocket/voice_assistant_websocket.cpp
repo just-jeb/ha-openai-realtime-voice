@@ -67,17 +67,17 @@ void VoiceAssistantWebSocket::loop() {
     }
     this->ready_trigger_.trigger();
   }
-  if (triggers & TRIGGER_THINKING) {
-    this->thinking_trigger_.trigger();
-  }
+  // Phase triggers are mutually exclusive — only fire the latest one.
+  // The WS handler clears other phase bits when setting a new phase, so normally
+  // only one is set. The else-if chain is a safety net if a race sets multiple.
   if (triggers & TRIGGER_REPLYING) {
     this->replying_trigger_.trigger();
-  }
-  if (triggers & TRIGGER_LISTENING) {
-    this->listening_trigger_.trigger();
-  }
-  if (triggers & TRIGGER_SEARCHING) {
+  } else if (triggers & TRIGGER_SEARCHING) {
     this->searching_trigger_.trigger();
+  } else if (triggers & TRIGGER_LISTENING) {
+    this->listening_trigger_.trigger();
+  } else if (triggers & TRIGGER_THINKING) {
+    this->thinking_trigger_.trigger();
   }
   if (triggers & TRIGGER_DISCONNECTED) {
     this->disconnected_trigger_.trigger();
@@ -597,26 +597,26 @@ void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t e
                    message.find("\"type\": \"phase\"") != std::string::npos) {
           if (message.find("\"phase\":\"thinking\"") != std::string::npos ||
               message.find("\"phase\": \"thinking\"") != std::string::npos) {
-            this->pending_triggers_ |= TRIGGER_THINKING;
+            this->pending_triggers_ = (this->pending_triggers_ & ~PHASE_MASK) | TRIGGER_THINKING;
             ESP_LOGI(TAG, "Phase: thinking");
           } else if (message.find("\"phase\":\"replying\"") != std::string::npos ||
                      message.find("\"phase\": \"replying\"") != std::string::npos) {
             this->searching_phase_active_ = false;
             this->last_speaker_audio_time_ = millis();
-            this->pending_triggers_ |= TRIGGER_REPLYING;
+            this->pending_triggers_ = (this->pending_triggers_ & ~PHASE_MASK) | TRIGGER_REPLYING;
             ESP_LOGI(TAG, "Phase: replying, searching_active=false, auto_stop_threshold=%u ms",
                      (unsigned) this->auto_stop_inactivity_ms_);
           } else if (message.find("\"phase\":\"listening\"") != std::string::npos ||
                      message.find("\"phase\": \"listening\"") != std::string::npos) {
             this->searching_phase_active_ = false;
-            this->pending_triggers_ |= TRIGGER_LISTENING;
+            this->pending_triggers_ = (this->pending_triggers_ & ~PHASE_MASK) | TRIGGER_LISTENING;
             ESP_LOGI(TAG, "Phase: listening, searching_active=false, auto_stop_threshold=%u ms",
                      (unsigned) this->auto_stop_inactivity_ms_);
           } else if (message.find("\"phase\":\"searching\"") != std::string::npos ||
                      message.find("\"phase\": \"searching\"") != std::string::npos) {
             this->searching_phase_active_ = true;
             this->last_speaker_audio_time_ = millis();
-            this->pending_triggers_ |= TRIGGER_SEARCHING;
+            this->pending_triggers_ = (this->pending_triggers_ & ~PHASE_MASK) | TRIGGER_SEARCHING;
             ESP_LOGI(TAG, "Phase: searching, searching_active=true, auto_stop_threshold=%u ms",
                      (unsigned) AUTO_STOP_SEARCHING_MS);
           }

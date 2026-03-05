@@ -105,6 +105,7 @@ class VoiceAssistantWebSocket : public Component {
   static const uint32_t TRIGGER_DISCONNECTED = 1 << 6;
   static const uint32_t TRIGGER_ERROR = 1 << 7;
   static const uint32_t TRIGGER_STOPPED = 1 << 8;  // e.g. server sent disconnect message
+  static const uint32_t PHASE_MASK = TRIGGER_THINKING | TRIGGER_REPLYING | TRIGGER_LISTENING | TRIGGER_SEARCHING;
   volatile uint32_t pending_triggers_{0};
   const char *pending_stop_reason_{nullptr};
 

@@ -74,6 +74,21 @@ HAOS on a dedicated host. ESPHome config under e.g.:
 
 Device name, friendly name, wake words, and other production settings can differ from the repo default.
 
+## Commit messages
+
+Use [Conventional Commits](https://www.conventionalcommits.org/): `type: description`.
+
+| Type | When |
+|------|------|
+| `fix:` | Bug fix |
+| `feat:` | New feature |
+| `chore:` | Build, config, deps, version bumps |
+| `docs:` | Documentation only |
+| `refactor:` | Code change that neither fixes a bug nor adds a feature |
+| `test:` | Adding or updating tests |
+
+Optional scope in parentheses: `fix(client):`, `feat(server):`, `chore(build):`.
+
 ## Keeping docs current
 
 | What changed                         | Update |
