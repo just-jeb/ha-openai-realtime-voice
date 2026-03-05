@@ -114,9 +114,6 @@ class VoiceAssistantWebSocket : public Component {
 
   uint32_t starting_millis_{0};
   static const uint32_t READY_TIMEOUT_MS = 2000;
-  static const uint8_t MAX_READY_RETRIES = 2;
-  uint8_t ready_timeout_retries_{0};
-  uint32_t last_ready_diag_millis_{0};  // throttle "waiting for ready" log to once per 3s
 
   std::vector<uint8_t> input_buffer_;
   std::vector<uint8_t> output_buffer_;

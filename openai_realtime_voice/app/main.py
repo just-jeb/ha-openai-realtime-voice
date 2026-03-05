@@ -619,17 +619,6 @@ class RealtimeVoiceBridge:
             pending_tool_tasks = set()
             in_flight_searches: dict[str, asyncio.Future[str]] = {}
 
-            async def ready_retry_loop() -> None:
-                for attempt in range(3):
-                    await asyncio.sleep(2.0)
-                    if first_audio_from_client[0]:
-                        return
-                    try:
-                        await client_ws.send(json.dumps({"type": "ready"}))
-                        logger.info("Ready retry #%d sent", attempt + 1)
-                    except Exception as e:
-                        logger.warning("Ready retry #%d failed: %s", attempt + 1, e)
-
             client_task = asyncio.create_task(
                 self._client_to_openai(
                     client_ws, openai_ws, client_id, output_queue,
@@ -653,8 +642,6 @@ class RealtimeVoiceBridge:
                     client_ws, output_queue, first_audio_to_client, end_reason
                 )
             )
-            ready_retry_task = asyncio.create_task(ready_retry_loop())
-
             finished, pending = await asyncio.wait(
                 [client_task, openai_task, sender_task],
                 return_when=asyncio.FIRST_COMPLETED,
@@ -662,13 +649,8 @@ class RealtimeVoiceBridge:
 
             for task in pending:
                 task.cancel()
-            ready_retry_task.cancel()
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
-            try:
-                await ready_retry_task
-            except asyncio.CancelledError:
-                pass
 
             for task in finished:
                 if task.cancelled():

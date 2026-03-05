@@ -499,7 +499,6 @@ async def test_happy_flow_client_receives_response_audio():
     """
     Contract: Client connects, receives ready, sends audio; server forwards to OpenAI;
     OpenAI responds with audio; client receives binary audio frames and phase messages.
-    Regression: session must survive past ready_retry_task completion (>3s).
     """
     handler = ScriptedOpenAIHandler(respond_after_append_count=3, response_audio_chunks=5)
     bridge_task, fake_server_task = await _run_bridge_with_fake_openai(handler)
