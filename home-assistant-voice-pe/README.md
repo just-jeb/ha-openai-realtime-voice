@@ -34,6 +34,9 @@ Edit `secrets.yaml`:
 - `api_encryption_key`: Home Assistant API encryption key
 - `ota_password`: Password for OTA updates
 - `server_url`: WebSocket URL for the OpenAI Realtime addon (e.g., `ws://homeassistant.local:8080`)
+- `wifi_static_ip`: (Optional) Static IP for the device — recommended if the ESPHome dashboard shows the device as offline
+- `wifi_gateway`: (Optional) Gateway IP (usually your router, e.g., `192.168.1.1`)
+- `wifi_subnet`: (Optional) Subnet mask (usually `255.255.255.0`)
 
 ### 3. Compile and Flash
 
@@ -70,6 +73,7 @@ The main configuration file is `voice_pe_config.yaml`. Key settings:
 
 ### Connection Issues
 
+- **Device shows offline in ESPHome dashboard**: The dashboard can't resolve the device via mDNS. Set `wifi_static_ip`, `wifi_gateway`, and `wifi_subnet` in `secrets.yaml` to assign a static IP (see `secrets.yaml.example`)
 - **Device doesn't connect**: Check `server_url` in `secrets.yaml` matches your addon configuration
 - **No audio**: Check hardware mute switch and verify microphone initialization in logs
 - **View logs**: `poetry run esphome logs voice_pe_config.yaml`
