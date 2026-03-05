@@ -630,6 +630,9 @@ void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t e
           ESP_LOGI(TAG, "Disconnect message received from server");
           this->pending_stop_reason_ = "disconnect_message";
           this->pending_triggers_ |= TRIGGER_STOPPED;
+        } else if (event_data->op_code == 0x09) {
+          // WebSocket ping — ESP-IDF handles pong automatically
+          ESP_LOGD(TAG, "WS ping received");
         } else {
           ESP_LOGW(TAG, "Unknown text message len=%zu: %.80s",
                    (size_t) message.size(), message.c_str());

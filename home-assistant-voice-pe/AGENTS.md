@@ -114,6 +114,17 @@ If HA never connects (red LEDs, `[E][api:129]: No clients; rebooting`):
 - Check device adoption in HA, encryption key match, and that HA is running.
 - `reboot_timeout: 0s` prevents the reboot but LEDs will stay red until HA connects.
 
+## Component Version
+
+When you change the C++ component (`.cpp`, `.h`, or `__init__.py`), bump the version in `.esphome_component.yml` using semver-like rules: breaking API change → major, new feature → minor, fix → patch.
+
+**What the version means today:** The component is pulled via `ref: main` in `external_components`, so ESPHome ignores the version field for resolution — it always pulls the latest main. The version is purely informational: git blame on `.esphome_component.yml` shows when the component last changed. In future, once the project uses git release tags and `ref: v1.x.y` pinning, users will see this version and be able to pin specific releases.
+
+**When to bump:**
+- C++ code changes (`.cpp`, `.h`, `__init__.py`) → bump version
+- YAML-only changes to `voice_pe_config.yaml` → no bump needed (not part of the component)
+- Documentation/AGENTS.md-only changes → no bump needed
+
 ## Keeping This Doc Current
 
 Update this file when:
@@ -124,3 +135,4 @@ Update this file when:
 - Buffer sizes or timing constants are retuned
 - The component source (git URL/ref) changes
 - Hardware changes (different board, different I2S pins)
+- When shipping a fix or feature to the C++ component: bump version in `.esphome_component.yml` (see Component Version above)

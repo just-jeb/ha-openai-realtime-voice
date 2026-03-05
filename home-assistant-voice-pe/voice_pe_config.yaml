@@ -74,6 +74,7 @@ esp32:
       CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY: "y"
       CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: "y"
       CONFIG_MBEDTLS_SSL_PROTO_TLS1_3: "y"
+      CONFIG_LOG_MAXIMUM_LEVEL: "5"
 
 wifi:
   id: wifi_id
@@ -482,22 +483,21 @@ light:
           name: "Searching"
           update_interval: 50ms
           lambda: |-
-            auto light_color = id(voice_assistant_leds).current_values;
-            Color color(light_color.get_red() * 255, light_color.get_green() * 255,
-                  light_color.get_blue() * 255);
+            Color green_color(0, 255, 0);
+            Color blue_color(0, 0, 255);
             for (uint8_t i = 0; i < 12; i++) {
               if (i == id(global_led_animation_index) % 12) {
-                it[i] = color;
+                it[i] = green_color;
               } else if (i == (id(global_led_animation_index) + 11) % 12) {
-                it[i] = color * 192;
+                it[i] = green_color * 192;
               } else if (i == (id(global_led_animation_index) + 10) % 12) {
-                it[i] = color * 128;
+                it[i] = green_color * 128;
               } else if (i == (id(global_led_animation_index) + 6) % 12) {
-                it[i] = color;
+                it[i] = blue_color;
               } else if (i == (id(global_led_animation_index) + 5) % 12) {
-                it[i] = color * 192;
+                it[i] = blue_color * 192;
               } else if (i == (id(global_led_animation_index) + 4) % 12) {
-                it[i] = color * 128;
+                it[i] = blue_color * 128;
               } else {
                 it[i] = Color::BLACK;
               }
