@@ -237,11 +237,10 @@ class RealtimeVoiceBridge:
         in_flight_searches: dict,
     ) -> None:
         """Forward OpenAI events to ESP32; audio and phases go through single output queue.
-        Sends phase messages (thinking/replying/listening/searching) for client LED feedback."""
+        Sends phase messages (thinking/replying/searching) for client LED feedback."""
         delta_count = 0
         delta_bytes_total = 0
         sent_replying_phase = False
-        had_audio = False
         try:
             async for raw in openai_ws:
                 if not isinstance(raw, str):
@@ -268,7 +267,6 @@ class RealtimeVoiceBridge:
                 elif ev_type == "response.output_audio.done":
                     await output_queue.put(None)
                     sent_replying_phase = False
-                    had_audio = True
                     duration_s = delta_bytes_total / BYTES_PER_SEC if delta_bytes_total else 0
                     logger.info(
                         "Response audio complete: %d deltas, %d bytes (%.1f s)",
@@ -315,15 +313,9 @@ class RealtimeVoiceBridge:
                                 )
                                 pending_tool_tasks.add(task)
                                 task.add_done_callback(pending_tool_tasks.discard)
-                    # Phase decision: single place after full response (audio + function calls) is known
-                    if had_audio or pending_tool_tasks:
-                        phase = "searching" if pending_tool_tasks else "listening"
-                        logger.info(
-                            "Phase decision: had_audio=%s, pending_tools=%d -> %s",
-                            had_audio, len(pending_tool_tasks), phase,
-                        )
-                        await output_queue.put(("phase", phase))
-                    had_audio = False
+                    if pending_tool_tasks:
+                        logger.info("Phase decision: pending_tools=%d -> searching", len(pending_tool_tasks))
+                        await output_queue.put(("phase", "searching"))
 
                 elif ev_type == "error":
                     logger.error("OpenAI error: %s", event.get("message", event))

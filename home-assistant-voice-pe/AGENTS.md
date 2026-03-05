@@ -51,6 +51,25 @@ for the server. Received 24kHz audio is passed to ESPHome's resampler
 speaker which converts to 48kHz for the I2S hardware. The C++ component
 does not handle output resampling — ESPHome's speaker pipeline does.
 
+## Phase Protocol
+
+The server sends phase messages to indicate what's happening:
+- **thinking** — user speech ended, model is processing
+- **replying** — model is generating audio response
+- **searching** — a background tool (e.g. web search) is running
+
+The server does **not** send "listening". The client derives it locally:
+when `is_bot_speaking()` transitions from true to false AND
+`searching_phase_active_` is false AND no server-sent phase trigger was
+processed in the same `loop()` iteration, the client fires
+`listening_trigger_`. The 500ms `is_bot_speaking()` threshold (documented
+under "Mic is muted during bot speech") provides the transition delay.
+
+This eliminates the race where the server sent "listening" at
+`response.done` before knowing if another response (with a tool call)
+would follow, which caused a brief green flash between replying and
+searching phases.
+
 **No reconnection.** If the connection drops (network, server restart,
 etc.), the component goes to IDLE. The user says the wake word again to
 start a fresh session. This keeps the lifecycle simple and avoids
@@ -136,3 +155,4 @@ Update this file when:
 - The component source (git URL/ref) changes
 - Hardware changes (different board, different I2S pins)
 - When shipping a fix or feature to the C++ component: bump version in `.esphome_component.yml` (see Component Version above)
+- **Session learnings:** If you discover something during a session that cost time or caused confusion (e.g. environment quirks, build steps, non-obvious gotchas), add it here before finishing. Future sessions start fresh and won't have that context unless it's written down.

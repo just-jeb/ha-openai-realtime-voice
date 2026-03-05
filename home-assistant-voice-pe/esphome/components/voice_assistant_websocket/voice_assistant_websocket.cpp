@@ -91,6 +91,19 @@ void VoiceAssistantWebSocket::loop() {
     this->stop(stop_reason ? stop_reason : "action");
   }
 
+  // Client-derived "listening": when bot stops speaking and no server phase was received
+  bool had_phase_trigger = (triggers & PHASE_MASK) != 0;
+  if (!had_phase_trigger && this->state_ == VOICE_ASSISTANT_WEBSOCKET_RUNNING) {
+    bool bot_speaking_now = this->is_bot_speaking();
+    if (this->was_bot_speaking_for_phase_ && !bot_speaking_now && !this->searching_phase_active_) {
+      this->was_bot_speaking_for_phase_ = false;
+      this->listening_trigger_.trigger();
+    }
+    if (bot_speaking_now) {
+      this->was_bot_speaking_for_phase_ = true;
+    }
+  }
+
   if (this->speaker_ != nullptr && this->speaker_->is_running() && !this->audio_queue_.empty()) {
     const std::vector<uint8_t> &queued_data = this->audio_queue_.front();
     size_t queued_written = this->speaker_->play(queued_data.data(), queued_data.size());
@@ -129,12 +142,7 @@ void VoiceAssistantWebSocket::loop() {
     }
   }
 
-  // WORKAROUND: The first WebSocket connection after boot consistently fails to
-  // receive DATA events from the ESP-IDF websocket client, even though CONNECTED
-  // fires and the server sends ready messages. Root cause unknown -- diagnostics
-  // (verbose logging for "websocket_client" tag) are in place to investigate.
-  // Auto-retry works because connection #2 always succeeds.
-  // TODO: Remove once the root cause is found and properly fixed.
+  // TODO: Remove retry once esp_websocket_client v1.6.1 fix is confirmed in production.
   if (this->state_ == VOICE_ASSISTANT_WEBSOCKET_STARTING) {
     if (this->starting_millis_ > 0) {
       uint32_t elapsed = millis() - this->starting_millis_;
@@ -211,6 +219,8 @@ void VoiceAssistantWebSocket::start() {
   this->first_audio_sent_ = false;
   this->first_audio_received_ = false;
   this->was_bot_speaking_ = false;
+  this->was_bot_speaking_for_phase_ = false;
+  this->first_data_after_connect_ = false;
 
   if (this->microphone_ != nullptr) {
     if (this->microphone_->is_stopped()) {
@@ -231,7 +241,7 @@ void VoiceAssistantWebSocket::start() {
   }
 
 #ifdef USE_ESP_IDF
-  esp_log_level_set("websocket_client", ESP_LOG_VERBOSE);
+  esp_log_level_set("websocket_client", ESP_LOG_INFO);
 #endif
   this->connect_websocket_();
 }
@@ -578,6 +588,12 @@ void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t e
       break;
 
     case WEBSOCKET_EVENT_DATA:
+      if (!this->first_data_after_connect_) {
+        this->first_data_after_connect_ = true;
+        uint32_t elapsed = this->connect_millis_ ? (millis() - this->connect_millis_) : 0;
+        ESP_LOGI(TAG, "[diag] first DATA event after connect: +%ums op=0x%02x",
+                 (unsigned) elapsed, event_data ? event_data->op_code : 0);
+      }
       if (event_data->op_code == 0x02) {
         this->process_received_audio_(reinterpret_cast<const uint8_t *>(event_data->data_ptr),
                                      event_data->data_len);

@@ -1,5 +1,5 @@
 name: OpenAI Realtime Voice
-version: "0.4.5"
+version: "0.5.0"
 slug: openai_realtime_voice
 description: WebSocket bridge from Voice PE to OpenAI Realtime API (voice Q&A and web search)
 url: https://github.com/just-jeb/ha-openai-realtime-voice

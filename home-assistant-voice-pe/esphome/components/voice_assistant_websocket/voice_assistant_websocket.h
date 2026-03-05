@@ -113,7 +113,7 @@ class VoiceAssistantWebSocket : public Component {
   static const uint32_t AUTO_STOP_SEARCHING_MS = 60000;
 
   uint32_t starting_millis_{0};
-  static const uint32_t READY_TIMEOUT_MS = 15000;
+  static const uint32_t READY_TIMEOUT_MS = 2000;
   static const uint8_t MAX_READY_RETRIES = 2;
   uint8_t ready_timeout_retries_{0};
   uint32_t last_ready_diag_millis_{0};  // throttle "waiting for ready" log to once per 3s
@@ -148,6 +148,8 @@ class VoiceAssistantWebSocket : public Component {
   bool first_audio_sent_{false};
   bool first_audio_received_{false};
   bool was_bot_speaking_{false};
+  bool was_bot_speaking_for_phase_{false};
+  bool first_data_after_connect_{false};
   uint32_t connection_count_{0};
   uint32_t connect_millis_{0};
   uint32_t audio_chunks_sent_{0};

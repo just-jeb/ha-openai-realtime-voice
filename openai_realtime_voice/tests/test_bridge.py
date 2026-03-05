@@ -420,8 +420,9 @@ async def test_phase_searching_with_function_call():
 
 
 @pytest.mark.asyncio
-async def test_phase_listening_without_function_call():
-    """When response has audio only (no function_call), phase after response.done is "listening"."""
+async def test_phase_no_listening_without_function_call():
+    """When response has audio only (no function_call), server sends no phase at response.done.
+    Client derives listening locally from audio playback state."""
     _ensure_env()
     from app.main import RealtimeVoiceBridge
 
@@ -454,7 +455,6 @@ async def test_phase_listening_without_function_call():
         pending_tool_tasks,
         {},
     )
-    # Post-response phase "listening" is queued; drain it
     while not output_queue.empty():
         try:
             item = output_queue.get_nowait()
@@ -463,8 +463,8 @@ async def test_phase_listening_without_function_call():
         except asyncio.QueueEmpty:
             break
 
-    assert phases_sent == ["replying", "listening"], (
-        f"Expected [replying, listening], got {phases_sent}"
+    assert phases_sent == ["replying"], (
+        f"Expected [replying], got {phases_sent}"
     )
     _cleanup_env()
 
@@ -527,10 +527,10 @@ async def test_happy_flow_client_receives_response_audio():
                     obj = json.loads(msg)
                     if obj.get("type") == "phase":
                         phases.append(obj.get("phase"))
-                if binary_received and len(phases) >= 3:
+                if binary_received and len(phases) >= 2:
                     break
         assert len(binary_received) >= 1, "Client should receive at least one binary audio frame"
-        assert "thinking" in phases and "replying" in phases and "listening" in phases
+        assert "thinking" in phases and "replying" in phases
     finally:
         bridge_task.cancel()
         fake_server_task.cancel()
@@ -662,10 +662,10 @@ async def test_client_interrupt_cancels_response():
 
 
 @pytest.mark.asyncio
-async def test_phase_lifecycle_thinking_replying_listening():
+async def test_phase_lifecycle_thinking_replying():
     """
-    Contract: After speech stops client receives thinking; when audio starts replying;
-    after response completes listening. Phases in exact order.
+    Contract: After speech stops client receives thinking; when audio starts replying.
+    Server does NOT send listening — client derives it from audio playback state.
     """
     handler = ScriptedOpenAIHandler(respond_after_append_count=2, response_audio_chunks=2)
     bridge_task, fake_server_task = await _run_bridge_with_fake_openai(handler)
@@ -677,13 +677,13 @@ async def test_phase_lifecycle_thinking_replying_listening():
             assert json.loads(ready).get("type") == "ready"
             await client_ws.send(b"\x00\x00" * 384)
             await client_ws.send(b"\x00\x00" * 384)
-            while len(phases) < 3:
+            while len(phases) < 2:
                 msg = await asyncio.wait_for(client_ws.recv(), timeout=5.0)
                 if isinstance(msg, str):
                     obj = json.loads(msg)
                     if obj.get("type") == "phase":
                         phases.append(obj.get("phase"))
-        assert phases == ["thinking", "replying", "listening"]
+        assert phases == ["thinking", "replying"]
     finally:
         bridge_task.cancel()
         fake_server_task.cancel()

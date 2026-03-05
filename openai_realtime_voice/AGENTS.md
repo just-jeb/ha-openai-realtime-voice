@@ -36,7 +36,7 @@ ESP32 Voice PE                    Addon
 - **Realtime API GA.** The addon uses the GA interface (no beta header); session config uses GA shape (`audio.input`/`audio.output`, `type: "realtime"`); server events are `response.output_audio.delta` / `response.output_audio.done`.
 - **Two tools:** `disconnect_client` and `search_web`, both in `main.py`. `disconnect_client` is handled synchronously in `_handle_tool_call` (ends session). Other tools (e.g. `search_web`) run in the background via `_run_tool_in_background` so the event loop stays responsive and the model can acknowledge the user while a tool is pending.
 - **Async function calling (GA):** The Realtime API supports the model continuing the conversation while a tool is pending (user can ask "how much longer?" and the model responds). The model does NOT reliably speak before calling tools regardless of instructions; instruction-based pre-acknowledgment was tested and failed. See [developer blog](https://developers.openai.com/blog/realtime-api).
-- **Searching phase:** When a background tool is dispatched, the server sends `{"type":"phase","phase":"searching"}`. After each `response.output_audio.done`, the server sends `searching` if `pending_tool_tasks` is non-empty, else `listening`. **All phases** (`thinking`, `replying`, `searching`, `listening`) go through a single **output queue** and are sent to the client in order by `_output_sender`; this eliminates race conditions and keeps LED/UX in sync with what the user hears. The client uses phase to show a distinct state (blue-green LEDs) and a 60s auto-stop timeout so long searches don't kill the session.
+- **Phase protocol:** The server sends `thinking`, `replying`, and `searching` phases only. "listening" was removed — the client derives it locally from audio playback state (`is_bot_speaking()` transitioning false). This eliminates the race where "listening" was sent at `response.done` before knowing if another response (with a tool call) would follow, which caused a brief green flash between replying and searching. At `response.done`, if `pending_tool_tasks` is non-empty, the server sends `searching`; otherwise no phase is sent. **All phases** go through a single **output queue** and are sent to the client in order by `_output_sender`; this eliminates race conditions and keeps LED/UX in sync with what the user hears. The client uses phase to show a distinct state (blue-green LEDs) and a 60s auto-stop timeout so long searches don't kill the session.
 - **Tool call deduplication:** In-flight `search_web` calls are deduplicated by query. If the model issues the same query again while a search is already running (e.g. user asks "what's taking so long?" and the model redundantly calls search again), the server reuses the first result for the duplicate call and does not trigger a second `response.create`, avoiding duplicate spoken answers.
 - **Stale tool results:** When the user moves on before a search completes, the old result may still be sent and the model may read it back. Deduplication only covers same-query duplicates while a search is in flight; cancelling on speech would break the "how much longer?" use case.
 - **Web search:** Responses API with `gpt-4.1-mini` (non-reasoning) typically completes in 3–10s; httpx timeout is 45s. `response_idle` prevents sending tool results while the model is mid-speech.
@@ -77,6 +77,20 @@ When you change the addon (behavior, config, contract, or fixes), update the add
 - `pytest.ini` — asyncio_mode = auto for tests.
 - `Dockerfile` — Single-stage; no Poetry. Used by `.github/workflows/build-addon.yml`.
 
+## Running tests
+
+Tests use the virtualenv at `openai_realtime_voice/.venv/`. System `python`/`python3` don't have pytest installed. Run from the `openai_realtime_voice/` directory:
+
+```bash
+.venv/bin/pytest tests/ -v
+```
+
+Or a single file:
+
+```bash
+.venv/bin/pytest tests/test_phase_decisions.py -v
+```
+
 ## Keeping this doc current
 
 Update when:
@@ -85,3 +99,4 @@ Update when:
 - A config option or tool is added or changed
 - The Docker build or dependencies change
 - When shipping a fix or feature: update version in `config.yaml` (semver-like; see Version above).
+- **Session learnings:** If you discover something during a session that cost time or caused confusion (e.g. environment quirks, tool invocation details, non-obvious gotchas), add it here before finishing. Future sessions start fresh and won't have that context unless it's written down.

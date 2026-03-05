@@ -39,8 +39,8 @@ Both sides must follow this. If one side changes, the other may need updates.
 | Server → Client | `{"type":"ready"}` | OpenAI connected; client should start sending audio and show "listening" (e.g. green LEDs). |
 | Server → Client | `{"type":"phase","phase":"thinking"}` | User stopped speaking; OpenAI is processing. |
 | Server → Client | `{"type":"phase","phase":"replying"}` | Bot started speaking. |
-| Server → Client | `{"type":"phase","phase":"listening"}` | Bot finished; ready for next user input. |
 | Server → Client | `{"type":"phase","phase":"searching"}` | Background tool (e.g. web search) running; client should show processing+listening state and use extended auto-stop timeout (e.g. 60s). |
+| *(client-derived)* | *(no message — client detects locally)* | "listening": client derives from `is_bot_speaking()` transitioning false while no search is active and no server phase arrived in the same loop iteration. |
 | Server → Client | `{"type":"disconnect"}` (optional: `"message"`, `"reason"`) | Session ended (e.g. user said goodbye); client should stop and go idle. |
 
 **Client:** Resample mic 16 kHz → 24 kHz before send; resample received 24 kHz → 48 kHz for the speaker.

@@ -60,7 +60,7 @@ async def to_code(config):
         add_idf_component(
             name="esp-protocols",
             repo="https://github.com/espressif/esp-protocols.git",
-            ref="websocket-v1.6.0",
+            ref="websocket-v1.6.1",
             path="components/esp_websocket_client"
         )
     
