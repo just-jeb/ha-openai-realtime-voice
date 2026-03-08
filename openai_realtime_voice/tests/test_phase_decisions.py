@@ -337,6 +337,60 @@ async def test_quota_error_queues_error_tuple():
 
 
 @pytest.mark.asyncio
+async def test_quota_error_suppresses_subsequent_events():
+    """After insufficient_quota, further OpenAI events are ignored (no extra phases)."""
+    events = [
+        {"type": "input_audio_buffer.speech_stopped"},
+        {"type": "response.created"},
+        {
+            "type": "response.done",
+            "response": {
+                "status": "failed",
+                "status_details": {
+                    "type": "failed",
+                    "error": {"type": "insufficient_quota", "message": "quota exceeded"},
+                },
+                "output": [],
+            },
+        },
+        # These events arrive AFTER the quota error (user kept talking)
+        {"type": "input_audio_buffer.speech_stopped"},
+        {"type": "response.created"},
+        {
+            "type": "response.done",
+            "response": {
+                "status": "failed",
+                "status_details": {
+                    "type": "failed",
+                    "error": {"type": "insufficient_quota", "message": "quota exceeded"},
+                },
+                "output": [],
+            },
+        },
+    ]
+    _ensure_env()
+    from app.main import RealtimeVoiceBridge
+    bridge = RealtimeVoiceBridge()
+    output_queue: asyncio.Queue = asyncio.Queue()
+    end_reason = {}
+    response_idle = asyncio.Event()
+    response_idle.set()
+    fake_client_ws = AsyncMock()
+    fake_openai_ws = _FakeOpenAIWs(events)
+    await bridge._openai_to_client(
+        fake_client_ws, fake_openai_ws, "test", output_queue,
+        end_reason, response_idle, set(), {},
+    )
+    items = _drain_queue_items(output_queue)
+    _cleanup_env()
+    # Only ONE error and ONE thinking phase (from before the quota error)
+    phases = [i for i in items if i[0] == "phase"]
+    errors = [i for i in items if i[0] == "error"]
+    assert errors == [("error", "insufficient_quota")]
+    assert phases == [("phase", "thinking")]
+
+
+@pytest.mark.asyncio
 async def test_non_quota_failure_does_not_queue_error():
     """A generic failed response does not queue an error tuple."""
     events = [

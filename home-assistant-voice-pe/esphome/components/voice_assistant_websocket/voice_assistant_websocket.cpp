@@ -627,8 +627,6 @@ void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t e
               message.find("\"code\": \"insufficient_quota\"") != std::string::npos) {
             ESP_LOGW(TAG, "Quota exceeded error from server");
             this->pending_stop_reason_ = "quota_exceeded";
-            // Reset auto-stop timer so it doesn't fire during the error animation
-            this->last_speaker_audio_time_ = millis();
             this->pending_triggers_ |= TRIGGER_QUOTA_EXCEEDED;
           } else {
             ESP_LOGW(TAG, "Error message from server: %.80s", message.c_str());

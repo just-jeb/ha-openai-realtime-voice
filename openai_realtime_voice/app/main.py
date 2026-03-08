@@ -241,9 +241,12 @@ class RealtimeVoiceBridge:
         delta_count = 0
         delta_bytes_total = 0
         sent_replying_phase = False
+        fatal_error_sent = False
         try:
             async for raw in openai_ws:
                 if not isinstance(raw, str):
+                    continue
+                if fatal_error_sent:
                     continue
                 try:
                     event = json.loads(raw)
@@ -303,6 +306,7 @@ class RealtimeVoiceBridge:
                             if is_quota:
                                 logger.error("OpenAI quota exceeded — notifying client")
                                 await output_queue.put(("error", "insufficient_quota"))
+                                fatal_error_sent = True
                     output = response.get("output", [])
                     output_summary = [
                         item.get("type") + (f"({item.get('name', '')})" if item.get("type") == "function_call" else "")
