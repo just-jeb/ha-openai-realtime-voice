@@ -27,6 +27,7 @@ CONF_ON_THINKING = "on_thinking"
 CONF_ON_REPLYING = "on_replying"
 CONF_ON_LISTENING = "on_listening"
 CONF_ON_SEARCHING = "on_searching"
+CONF_ON_QUOTA_EXCEEDED = "on_quota_exceeded"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -44,6 +45,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_ON_REPLYING): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_LISTENING): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_SEARCHING): automation.validate_automation(single=True),
+        cv.Optional(CONF_ON_QUOTA_EXCEEDED): automation.validate_automation(single=True),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -119,6 +121,11 @@ async def to_code(config):
     if CONF_ON_SEARCHING in config:
         await automation.build_automation(
             var.get_searching_trigger(), [], config[CONF_ON_SEARCHING]
+        )
+
+    if CONF_ON_QUOTA_EXCEEDED in config:
+        await automation.build_automation(
+            var.get_quota_exceeded_trigger(), [], config[CONF_ON_QUOTA_EXCEEDED]
         )
 
 

@@ -79,6 +79,10 @@ void VoiceAssistantWebSocket::loop() {
   } else if (triggers & TRIGGER_THINKING) {
     this->thinking_trigger_.trigger();
   }
+  if (triggers & TRIGGER_QUOTA_EXCEEDED) {
+    // Does NOT call stop() — YAML automation plays sound + shows LEDs for a few seconds, then calls stop.
+    this->quota_exceeded_trigger_.trigger();
+  }
   if (triggers & TRIGGER_DISCONNECTED) {
     this->disconnected_trigger_.trigger();
     this->stop(stop_reason ? stop_reason : "ws_disconnected");
@@ -617,6 +621,19 @@ void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t e
           ESP_LOGI(TAG, "Disconnect message received from server");
           this->pending_stop_reason_ = "disconnect_message";
           this->pending_triggers_ |= TRIGGER_STOPPED;
+        } else if (message.find("\"type\":\"error\"") != std::string::npos ||
+                   message.find("\"type\": \"error\"") != std::string::npos) {
+          if (message.find("\"code\":\"insufficient_quota\"") != std::string::npos ||
+              message.find("\"code\": \"insufficient_quota\"") != std::string::npos) {
+            ESP_LOGW(TAG, "Quota exceeded error from server");
+            this->pending_stop_reason_ = "quota_exceeded";
+            // Reset auto-stop timer so it doesn't fire during the error animation
+            this->last_speaker_audio_time_ = millis();
+            this->pending_triggers_ |= TRIGGER_QUOTA_EXCEEDED;
+          } else {
+            ESP_LOGW(TAG, "Error message from server: %.80s", message.c_str());
+            this->pending_triggers_ |= TRIGGER_ERROR;
+          }
         } else if (event_data->op_code == 0x09) {
           // WebSocket ping — ESP-IDF handles pong automatically
           ESP_LOGD(TAG, "WS ping received");

@@ -42,6 +42,7 @@ Both sides must follow this. If one side changes, the other may need updates.
 | Server → Client | `{"type":"phase","phase":"searching"}` | Background tool (e.g. web search) running; client should show processing+listening state and use extended auto-stop timeout (e.g. 60s). |
 | *(client-derived)* | *(no message — client detects locally)* | "listening": client derives from `is_bot_speaking()` transitioning false while no search is active and no server phase arrived in the same loop iteration. |
 | Server → Client | `{"type":"disconnect"}` (optional: `"message"`, `"reason"`) | Session ended (e.g. user said goodbye); client should stop and go idle. |
+| Server → Client | `{"type":"error","code":"insufficient_quota"}` | OpenAI quota exceeded; client plays error sound, shows red-yellow LEDs for ~4s, then stops. |
 
 **Client:** Resample mic 16 kHz → 24 kHz before send; resample received 24 kHz → 48 kHz for the speaker.
 

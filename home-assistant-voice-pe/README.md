@@ -64,10 +64,26 @@ The main configuration file is `voice_pe_config.yaml`. Key settings:
 
 - **Voice Assistant**: Real-time voice interaction with OpenAI Realtime API
 - **Wake Word Detection**: Multiple wake words supported
-- **LED Feedback**: Visual status indicators
+- **LED Feedback**: Visual status indicators (green = ready, blue = thinking, cyan = replying, red-yellow = quota error)
+- **Audio Feedback**: Chime on ready, cha-ching on quota error, optional wake sound
 - **Hardware Controls**: Button controls and mute switch
 - **Auto Gain Control**: Hardware-based AGC for consistent audio levels
 - **Echo Cancellation**: Hardware-based AEC prevents feedback
+
+## Sound files
+
+Sound files (`wake_sound.flac`, `ready_sound.flac`, `error_quota_sound.flac`) are fetched automatically from GitHub at compile time and embedded in firmware. **No manual file copying is needed.**
+
+To use a custom sound, override the substitution in `voice_pe_config.yaml`:
+
+```yaml
+substitutions:
+  wake_word_triggered_sound_file: /config/esphome/my_custom_wake.flac
+  # or a URL:
+  ready_sound_file: https://example.com/my_chime.flac
+```
+
+Sound files must be FLAC format, 48 kHz, mono, 16-bit. See `sounds/LICENSE.md` for attribution.
 
 ## Troubleshooting
 

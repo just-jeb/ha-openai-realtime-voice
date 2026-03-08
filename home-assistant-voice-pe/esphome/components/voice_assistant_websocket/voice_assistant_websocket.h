@@ -60,6 +60,7 @@ class VoiceAssistantWebSocket : public Component {
   Trigger<> *get_replying_trigger() { return &this->replying_trigger_; }
   Trigger<> *get_listening_trigger() { return &this->listening_trigger_; }
   Trigger<> *get_searching_trigger() { return &this->searching_trigger_; }
+  Trigger<> *get_quota_exceeded_trigger() { return &this->quota_exceeded_trigger_; }
 
   protected:
   void connect_websocket_();
@@ -94,6 +95,7 @@ class VoiceAssistantWebSocket : public Component {
   Trigger<> replying_trigger_{};
   Trigger<> listening_trigger_{};
   Trigger<> searching_trigger_{};
+  Trigger<> quota_exceeded_trigger_{};
 
   // Deferred triggers: set in WS event handler (library task), drained in loop() (main loop)
   static const uint32_t TRIGGER_CONNECTED = 1 << 0;
@@ -105,6 +107,7 @@ class VoiceAssistantWebSocket : public Component {
   static const uint32_t TRIGGER_DISCONNECTED = 1 << 6;
   static const uint32_t TRIGGER_ERROR = 1 << 7;
   static const uint32_t TRIGGER_STOPPED = 1 << 8;  // e.g. server sent disconnect message
+  static const uint32_t TRIGGER_QUOTA_EXCEEDED = 1 << 9;
   static const uint32_t PHASE_MASK = TRIGGER_THINKING | TRIGGER_REPLYING | TRIGGER_LISTENING | TRIGGER_SEARCHING;
   volatile uint32_t pending_triggers_{0};
   const char *pending_stop_reason_{nullptr};

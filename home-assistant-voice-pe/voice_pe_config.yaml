@@ -37,9 +37,13 @@ substitutions:
   voice_assist_searching_phase_id: '6'
   voice_assist_not_ready_phase_id: '10'
   voice_assist_error_phase_id: '11'
+  voice_assist_quota_error_phase_id: '12'
   # Server URL is now defined in secrets.yaml as server_url
-  # Sound file for wake word (local file)
-  wake_word_triggered_sound_file: wake_sound.flac
+  # Sound files — fetched from GitHub at compile time, embedded in firmware (no manual copying needed)
+  # Override these substitutions with a local path if you want a custom sound
+  wake_word_triggered_sound_file: https://github.com/just-jeb/ha-openai-realtime-voice/raw/main/home-assistant-voice-pe/sounds/wake_sound.flac
+  ready_sound_file: https://github.com/just-jeb/ha-openai-realtime-voice/raw/main/home-assistant-voice-pe/sounds/ready_sound.flac
+  error_quota_sound_file: https://github.com/just-jeb/ha-openai-realtime-voice/raw/main/home-assistant-voice-pe/sounds/error_quota_sound.flac
 
 esphome:
   name: ha-voice-openai
@@ -584,6 +588,20 @@ light:
             if (brightness_step == 0 || brightness_step == brightness_step_number) {
               brightness_decreasing = !brightness_decreasing;
             }
+      - addressable_lambda:
+          name: "Quota Error"
+          update_interval: 100ms
+          lambda: |-
+            static uint8_t frame = 0;
+            if (initial_run) { frame = 0; }
+            Color red(255, 0, 0);
+            Color yellow(255, 180, 0);
+            bool swap = (frame % 6) < 3;  // swap every 300ms
+            for (uint8_t i = 0; i < 12; i++) {
+              bool even = (i % 2 == 0);
+              it[i] = ((even && !swap) || (!even && swap)) ? red : yellow;
+            }
+            frame++;
       - addressable_twinkle:
           name: "Twinkle"
           twinkle_probability: 50%
@@ -675,6 +693,8 @@ script:
             id(control_leds_voice_assistant_replying_phase).execute();
           } else if (id(voice_assistant_phase) == ${voice_assist_searching_phase_id}) {
             id(control_leds_voice_assistant_searching_phase).execute();
+          } else if (id(voice_assistant_phase) == ${voice_assist_quota_error_phase_id}) {
+            id(control_leds_voice_assistant_quota_error_phase).execute();
           } else if (id(voice_assistant_phase) == ${voice_assist_error_phase_id}) {
             id(control_leds_voice_assistant_error_phase).execute();
           } else if (id(voice_assistant_phase) == ${voice_assist_not_ready_phase_id}) {
@@ -793,6 +813,17 @@ script:
           blue: 0
           id: voice_assistant_leds
           effect: "Error"
+
+  # Script executed when the voice assistant hits a quota error (alternating red-yellow)
+  - id: control_leds_voice_assistant_quota_error_phase
+    then:
+      - light.turn_on:
+          brightness: !lambda return min ( max( id(led_ring).current_values.get_brightness() , 0.2f ) + 0.1f , 1.0f );
+          red: 100%
+          green: 50%
+          blue: 0%
+          id: voice_assistant_leds
+          effect: "Quota Error"
 
   # Script executed when the voice assistant is muted or silent
   - id: control_leds_muted_or_silent
@@ -984,10 +1015,13 @@ media_player:
       num_channels: 2
       sample_rate: 48000
     files:
-      # Wake sound played when "okay nabu" is detected (if wake_sound switch is enabled)
-      # File format: FLAC (48kHz, stereo recommended)
+      # Sound files are fetched from GitHub at compile time and embedded in firmware
       - id: wake_word_triggered_sound
         file: ${wake_word_triggered_sound_file}
+      - id: ready_sound
+        file: ${ready_sound_file}
+      - id: error_quota_sound
+        file: ${error_quota_sound_file}
     on_mute:
       - script.execute: control_leds
     on_unmute:
@@ -1113,6 +1147,10 @@ voice_assistant_websocket:
   on_ready:
     - lambda: id(voice_assistant_phase) = ${voice_assist_listening_for_command_phase_id};  # Green: ready, speak now
     - script.execute: control_leds
+    - script.execute:
+        id: play_sound
+        priority: false
+        sound_file: !lambda 'return id(ready_sound);'
   on_thinking:
     - lambda: id(voice_assistant_phase) = ${voice_assist_thinking_phase_id};  # Blue: processing
     - script.execute: control_leds
@@ -1156,6 +1194,17 @@ voice_assistant_websocket:
               id: media_mixing_input
               decibel_reduction: 0
               duration: 1.0s
+  on_quota_exceeded:
+    # Play cha-ching sound, show alternating red-yellow LEDs for 4s, then stop
+    - lambda: id(voice_assistant_phase) = ${voice_assist_quota_error_phase_id};
+    - script.execute: control_leds
+    - script.execute:
+        id: play_sound
+        priority: true
+        sound_file: !lambda 'return id(error_quota_sound);'
+    - delay: 4s
+    - voice_assistant_websocket.stop:
+        id: voice_assistant_ws
 
 # Voice Kit Component - Voice PE Hardware (XMOS Firmware)
 # The XMOS XU316 chip has built-in audio processing support:

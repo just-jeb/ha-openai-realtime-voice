@@ -289,6 +289,20 @@ class RealtimeVoiceBridge:
                             status,
                             response.get("status_details"),
                         )
+                        if status == "failed":
+                            details = response.get("status_details")
+                            is_quota = False
+                            if isinstance(details, dict):
+                                error = details.get("error", {})
+                                if isinstance(error, dict):
+                                    is_quota = error.get("type") == "insufficient_quota"
+                                elif isinstance(error, str):
+                                    is_quota = "insufficient_quota" in error
+                            elif isinstance(details, str):
+                                is_quota = "insufficient_quota" in details
+                            if is_quota:
+                                logger.error("OpenAI quota exceeded — notifying client")
+                                await output_queue.put(("error", "insufficient_quota"))
                     output = response.get("output", [])
                     output_summary = [
                         item.get("type") + (f"({item.get('name', '')})" if item.get("type") == "function_call" else "")
@@ -382,6 +396,18 @@ class RealtimeVoiceBridge:
                         await client_ws.send(bytes(buffer))
                         buffer.clear()
                     await self._send_phase(client_ws, chunk[1])
+                    continue
+
+                if isinstance(chunk, tuple) and chunk[0] == "error":
+                    if buffer:
+                        await client_ws.send(bytes(buffer))
+                        buffer.clear()
+                    error_code = chunk[1]
+                    try:
+                        await client_ws.send(json.dumps({"type": "error", "code": error_code}))
+                        logger.info("Sent error to client: code=%s", error_code)
+                    except Exception as e:
+                        logger.warning("Failed to send error '%s': %s", error_code, e)
                     continue
 
                 if not first_audio_to_client[0]:

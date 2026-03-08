@@ -60,6 +60,19 @@ def _drain_phases(output_queue: asyncio.Queue) -> list[str]:
     return phases
 
 
+def _drain_queue_items(output_queue: asyncio.Queue) -> list[tuple]:
+    """Drain all tuples from the output queue (phases and errors)."""
+    items = []
+    while not output_queue.empty():
+        try:
+            item = output_queue.get_nowait()
+            if isinstance(item, tuple):
+                items.append(item)
+        except asyncio.QueueEmpty:
+            break
+    return items
+
+
 async def _run_openai_to_client(events, pending_tool_tasks=None, mock_tool=None):
     """Run _openai_to_client with scripted events and return queued phases."""
     _ensure_env()
@@ -268,6 +281,64 @@ async def test_empty_response():
 async def test_error_response():
     """Error response: speech_stop -> response.done(status=failed).
     Expected phases: [thinking] only."""
+    events = [
+        {"type": "input_audio_buffer.speech_stopped"},
+        {"type": "response.created"},
+        {
+            "type": "response.done",
+            "response": {
+                "status": "failed",
+                "status_details": "internal_error",
+                "output": [],
+            },
+        },
+    ]
+    phases = await _run_openai_to_client(events)
+    assert phases == ["thinking"]
+    assert "listening" not in phases
+
+
+@pytest.mark.asyncio
+async def test_quota_error_queues_error_tuple():
+    """insufficient_quota on response.done queues ("error", "insufficient_quota")."""
+    events = [
+        {"type": "input_audio_buffer.speech_stopped"},
+        {"type": "response.created"},
+        {
+            "type": "response.done",
+            "response": {
+                "status": "failed",
+                "status_details": {
+                    "type": "failed",
+                    "error": {"type": "insufficient_quota", "message": "You exceeded your current quota"},
+                },
+                "output": [],
+            },
+        },
+    ]
+    items = []
+    _ensure_env()
+    from app.main import RealtimeVoiceBridge
+    bridge = RealtimeVoiceBridge()
+    output_queue: asyncio.Queue = asyncio.Queue()
+    end_reason = {}
+    response_idle = asyncio.Event()
+    response_idle.set()
+    fake_client_ws = AsyncMock()
+    fake_openai_ws = _FakeOpenAIWs(events)
+    await bridge._openai_to_client(
+        fake_client_ws, fake_openai_ws, "test", output_queue,
+        end_reason, response_idle, set(), {},
+    )
+    items = _drain_queue_items(output_queue)
+    _cleanup_env()
+    error_items = [i for i in items if i[0] == "error"]
+    assert error_items == [("error", "insufficient_quota")]
+
+
+@pytest.mark.asyncio
+async def test_non_quota_failure_does_not_queue_error():
+    """A generic failed response does not queue an error tuple."""
     events = [
         {"type": "input_audio_buffer.speech_stopped"},
         {"type": "response.created"},
