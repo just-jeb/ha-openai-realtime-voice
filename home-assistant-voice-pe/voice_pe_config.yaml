@@ -899,29 +899,33 @@ script:
           value: 0
       - script.execute: control_leds
 
-  # Script to play a sound file via media player
-  # Uses play_on_device_media_file action (ESPHome 2026.2.0+)
-  - id: play_sound
-    parameters:
-      priority: bool
-      sound_file: "audio::AudioFile*"
+  # Per-sound scripts using play_on_device_media_file (media_file is not templatable)
+  - id: play_wake_sound
     then:
-      - if:
-          condition:
-            lambda: return priority;
-          then:
-            - media_player.stop:
-                id: voice_media_player
-                announcement: true
-      - if:
-          condition:
-            lambda: |-
-              return (id(voice_media_player).state != media_player::MediaPlayerState::MEDIA_PLAYER_STATE_ANNOUNCING) || priority;
-          then:
-            - media_player.speaker.play_on_device_media_file:
-                id: voice_media_player
-                media_file: !lambda 'return sound_file;'
-                announcement: true
+      - media_player.stop:
+          id: voice_media_player
+          announcement: true
+      - media_player.speaker.play_on_device_media_file:
+          id: voice_media_player
+          media_file: wake_word_triggered_sound
+          announcement: true
+
+  - id: play_ready_sound
+    then:
+      - media_player.speaker.play_on_device_media_file:
+          id: voice_media_player
+          media_file: ready_sound
+          announcement: true
+
+  - id: play_error_quota_sound
+    then:
+      - media_player.stop:
+          id: voice_media_player
+          announcement: true
+      - media_player.speaker.play_on_device_media_file:
+          id: voice_media_player
+          media_file: error_quota_sound
+          announcement: true
 
 # I2S Audio Input (Microphone) - Voice PE Hardware
 i2s_audio:
@@ -1077,10 +1081,7 @@ micro_wake_word:
               condition:
                 switch.is_on: wake_sound
               then:
-                - script.execute:
-                    id: play_sound
-                    priority: true
-                    sound_file: !lambda 'return id(wake_word_triggered_sound);'
+                - script.execute: play_wake_sound
                 - delay: 300ms
           # Handle wake word based on bot speaking state
           - if:
@@ -1150,10 +1151,7 @@ voice_assistant_websocket:
   on_ready:
     - lambda: id(voice_assistant_phase) = ${voice_assist_listening_for_command_phase_id};  # Green: ready, speak now
     - script.execute: control_leds
-    - script.execute:
-        id: play_sound
-        priority: false
-        sound_file: !lambda 'return id(ready_sound);'
+    - script.execute: play_ready_sound
   on_thinking:
     - lambda: id(voice_assistant_phase) = ${voice_assist_thinking_phase_id};  # Blue: processing
     - script.execute: control_leds
@@ -1201,10 +1199,7 @@ voice_assistant_websocket:
     # Play cha-ching sound, show alternating red-yellow LEDs for 4s, then stop
     - lambda: id(voice_assistant_phase) = ${voice_assist_quota_error_phase_id};
     - script.execute: control_leds
-    - script.execute:
-        id: play_sound
-        priority: true
-        sound_file: !lambda 'return id(error_quota_sound);'
+    - script.execute: play_error_quota_sound
     - delay: 4s
     - voice_assistant_websocket.stop:
         id: voice_assistant_ws
