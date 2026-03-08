@@ -81,6 +81,7 @@ void VoiceAssistantWebSocket::loop() {
   }
   if (triggers & TRIGGER_QUOTA_EXCEEDED) {
     // Does NOT call stop() — YAML automation plays sound + shows LEDs for a few seconds, then calls stop.
+    ESP_LOGW(TAG, "Firing quota_exceeded trigger in loop()");
     this->quota_exceeded_trigger_.trigger();
   }
   if (triggers & TRIGGER_DISCONNECTED) {
