@@ -90,6 +90,8 @@ class RealtimeVoiceBridge:
         if self.enable_recording:
             self.recorder = AudioRecorder(output_dir="recordings")
 
+        self._active_sessions: dict[str, websockets.WebSocketServerProtocol] = {}
+
         if not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY environment variable is required")
 
@@ -625,6 +627,15 @@ class RealtimeVoiceBridge:
         logger.info("Client connected: %s", client_id)
         start_time = time.monotonic()
 
+        old_ws = self._active_sessions.get(client_id)
+        if old_ws is not None:
+            logger.warning("Closing previous session for %s", client_id)
+            try:
+                await old_ws.close(1000, "replaced by new connection")
+            except Exception:
+                pass
+        self._active_sessions[client_id] = client_ws
+
         if self.recorder:
             self.recorder.start_recording(client_id)
 
@@ -692,6 +703,8 @@ class RealtimeVoiceBridge:
             logger.error("Session error: %s", e, exc_info=True)
             end_reason["reason"] = "session_error"
         finally:
+            if self._active_sessions.get(client_id) is client_ws:
+                del self._active_sessions[client_id]
             if openai_ws:
                 try:
                     await openai_ws.close()

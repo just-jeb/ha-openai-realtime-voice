@@ -116,7 +116,8 @@ class VoiceAssistantWebSocket : public Component {
   static const uint32_t AUTO_STOP_SEARCHING_MS = 60000;
 
   uint32_t starting_millis_{0};
-  static const uint32_t READY_TIMEOUT_MS = 2000;
+  uint8_t ready_timeout_retries_{0};
+  static const uint32_t READY_TIMEOUT_MS = 5000;
 
   std::vector<uint8_t> input_buffer_;
   std::vector<uint8_t> output_buffer_;

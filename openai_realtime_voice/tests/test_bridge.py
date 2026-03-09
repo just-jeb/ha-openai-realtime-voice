@@ -661,6 +661,48 @@ async def test_client_interrupt_cancels_response():
 
 
 @pytest.mark.asyncio
+async def test_duplicate_connection_closes_old():
+    """
+    Contract: When the same client (same IP) connects twice, the first connection
+    is closed and the second one works normally (receives ready).
+    """
+    handler = ScriptedOpenAIHandler(respond_after_append_count=99)
+    bridge_task, fake_server_task = await _run_bridge_with_fake_openai(handler)
+
+    try:
+        # First connection
+        client_ws1 = await websockets.connect(f"ws://127.0.0.1:{BRIDGE_PORT}/")
+        ready1 = await asyncio.wait_for(client_ws1.recv(), timeout=5.0)
+        assert json.loads(ready1).get("type") == "ready"
+
+        # Second connection from same address — should close the first
+        client_ws2 = await websockets.connect(f"ws://127.0.0.1:{BRIDGE_PORT}/")
+        ready2 = await asyncio.wait_for(client_ws2.recv(), timeout=5.0)
+        assert json.loads(ready2).get("type") == "ready"
+
+        # First connection should be closed
+        try:
+            await asyncio.wait_for(client_ws1.recv(), timeout=2.0)
+        except (websockets.exceptions.ConnectionClosed, asyncio.TimeoutError):
+            pass
+        # websockets >=14 uses .state; older versions use .closed
+        if hasattr(client_ws1, "state"):
+            from websockets.protocol import State
+            assert client_ws1.state is State.CLOSED, "First connection should be closed"
+        else:
+            assert client_ws1.closed, "First connection should be closed"
+
+        # Second connection should still work
+        await client_ws2.send(b"\x00\x00" * 384)
+        await client_ws2.close()
+    finally:
+        bridge_task.cancel()
+        fake_server_task.cancel()
+        await asyncio.gather(bridge_task, fake_server_task, return_exceptions=True)
+        _cleanup_env()
+
+
+@pytest.mark.asyncio
 async def test_phase_lifecycle_thinking_replying():
     """
     Contract: After speech stops client receives thinking; when audio starts replying.

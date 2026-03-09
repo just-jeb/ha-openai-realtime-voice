@@ -81,16 +81,14 @@ void VoiceAssistantWebSocket::loop() {
   }
   if (triggers & TRIGGER_QUOTA_EXCEEDED) {
     // Does NOT call stop() — YAML automation plays sound + shows LEDs for a few seconds, then calls stop.
-    ESP_LOGW(TAG, "Firing quota_exceeded trigger in loop()");
     this->quota_exceeded_trigger_.trigger();
-  }
-  if (triggers & TRIGGER_DISCONNECTED) {
-    this->disconnected_trigger_.trigger();
-    this->stop(stop_reason ? stop_reason : "ws_disconnected");
   }
   if (triggers & TRIGGER_ERROR) {
     this->error_trigger_.trigger();
     this->stop(stop_reason ? stop_reason : "ws_error");
+  } else if (triggers & TRIGGER_DISCONNECTED) {
+    this->disconnected_trigger_.trigger();
+    this->stop(stop_reason ? stop_reason : "ws_disconnected");
   }
   if (triggers & TRIGGER_STOPPED) {
     this->stop(stop_reason ? stop_reason : "action");
@@ -136,8 +134,15 @@ void VoiceAssistantWebSocket::loop() {
     if (this->starting_millis_ > 0) {
       uint32_t elapsed = millis() - this->starting_millis_;
       if (elapsed > READY_TIMEOUT_MS) {
-        ESP_LOGW(TAG, "Ready timeout (%u ms), stopping", (unsigned) READY_TIMEOUT_MS);
-        this->stop("ready_timeout");
+        if (this->ready_timeout_retries_ == 0) {
+          this->ready_timeout_retries_++;
+          ESP_LOGW(TAG, "Ready timeout (%u ms), retrying", (unsigned) READY_TIMEOUT_MS);
+          this->stop("ready_timeout_retry");
+          this->pending_start_ = true;
+        } else {
+          ESP_LOGW(TAG, "Ready timeout (%u ms) after retry, stopping", (unsigned) READY_TIMEOUT_MS);
+          this->stop("ready_timeout");
+        }
       }
     }
   }
@@ -582,6 +587,7 @@ void VoiceAssistantWebSocket::handle_websocket_event_(esp_websocket_event_id_t e
             message.find("\"type\": \"ready\"") != std::string::npos) {
           if (this->state_ == VOICE_ASSISTANT_WEBSOCKET_STARTING) {
             this->state_ = VOICE_ASSISTANT_WEBSOCKET_RUNNING;
+            this->ready_timeout_retries_ = 0;
             this->pending_triggers_ |= TRIGGER_READY;
             ESP_LOGI(TAG, "Ready received, state: RUNNING");
           }
