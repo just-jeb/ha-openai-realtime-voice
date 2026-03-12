@@ -85,6 +85,9 @@ class RealtimeVoiceBridge:
         self.vad_threshold = float(os.environ.get("VAD_THRESHOLD", "0.5"))
         self.vad_prefix_padding_ms = int(os.environ.get("VAD_PREFIX_PADDING_MS", "300"))
         self.vad_silence_duration_ms = int(os.environ.get("VAD_SILENCE_DURATION_MS", "500"))
+        self.voice = os.environ.get("VOICE", "marin")
+        self.realtime_model = os.environ.get("REALTIME_MODEL", "gpt-realtime")
+        self.web_search_model = os.environ.get("WEB_SEARCH_MODEL", "gpt-4.1-mini")
         self.enable_recording = os.environ.get("ENABLE_RECORDING", "false").lower() == "true"
         self.recorder: Optional[AudioRecorder] = None
         if self.enable_recording:
@@ -114,7 +117,7 @@ class RealtimeVoiceBridge:
                     },
                     "output": {
                         "format": {"type": "audio/pcm", "rate": SAMPLE_RATE},
-                        "voice": "marin",
+                        "voice": self.voice,
                     },
                 },
                 "tools": TOOLS,
@@ -123,9 +126,8 @@ class RealtimeVoiceBridge:
 
     async def _connect_openai(self):
         """Open WebSocket to OpenAI Realtime API."""
-        url = os.environ.get(
-            "OPENAI_REALTIME_URL", "wss://api.openai.com/v1/realtime?model=gpt-realtime"
-        )
+        default_url = f"wss://api.openai.com/v1/realtime?model={self.realtime_model}"
+        url = os.environ.get("OPENAI_REALTIME_URL", default_url)
         additional_headers = {
             "Authorization": f"Bearer {self.openai_api_key}",
         }
@@ -514,7 +516,8 @@ class RealtimeVoiceBridge:
         except json.JSONDecodeError:
             args = {}
 
-        logger.info("Tool call: name=%s args=%s", name, args)
+        logger.info("Tool call: name=%s", name)
+        logger.debug("Tool call args: %s", args)
 
         output: str
         if name == "search_web":
@@ -603,7 +606,7 @@ class RealtimeVoiceBridge:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "gpt-4.1-mini",
+                    "model": self.web_search_model,
                     "input": query,
                     "tools": [{"type": "web_search"}],
                 },

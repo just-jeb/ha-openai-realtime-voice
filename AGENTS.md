@@ -98,5 +98,6 @@ Optional scope in parentheses: `fix(client):`, `feat(server):`, `chore(build):`.
 | Server tools, config, Docker         | `openai_realtime_voice/AGENTS.md` |
 | Client firmware, ESPHome, hardware  | `home-assistant-voice-pe/AGENTS.md` |
 | Deployment, owner setup              | This file (deployment) |
+| Release notes, version history       | `CHANGELOG.md` |
 
 If a change affects how the two components talk, update this file. If it’s internal to one component, update that component’s `AGENTS.md`.

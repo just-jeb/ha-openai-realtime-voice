@@ -48,6 +48,9 @@ ESP32 Voice PE                    Addon
 - `websocket_port` — Default 8080.
 - `vad_threshold`, `vad_prefix_padding_ms`, `vad_silence_duration_ms` — Server-side VAD.
 - `instructions` — System prompt for the model.
+- `voice` — OpenAI Realtime voice (default `marin`).
+- `realtime_model` — OpenAI Realtime model (default `gpt-realtime`). Constructs the WebSocket URL as `wss://api.openai.com/v1/realtime?model={realtime_model}`. For full URL override, set `OPENAI_REALTIME_URL` env var directly.
+- `web_search_model` — Model for Responses API web search (default `gpt-4.1-mini`).
 - `web_search_api_key` — Optional; if empty (or whitespace-only), `openai_api_key` is used for web search. Must have **Responses (Write)** permission. A 401 on web search means the key lacks this permission.
 - `enable_recording` — If true, WAVs written under `recordings/` via `app/audio_recorder.py`.
 

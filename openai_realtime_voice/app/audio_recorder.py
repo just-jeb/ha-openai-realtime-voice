@@ -54,7 +54,7 @@ class AudioRecorder:
         self._write_wav_header(self._output_file, sample_rate=24000, channels=1, bits_per_sample=16)
         self._output_bytes = 0
         
-        logger.info(f"🎙️ Started recording: input={input_filename}, output={output_filename}")
+        logger.info(f"Started recording: input={input_filename}, output={output_filename}")
         
     def record_input_audio(self, audio_bytes: bytes):
         """
@@ -66,7 +66,7 @@ class AudioRecorder:
         if self._input_file and audio_bytes:
             # Validate audio format: 16-bit = 2 bytes per sample
             if len(audio_bytes) % 2 != 0:
-                logger.warning(f"⚠️ Input audio has odd byte count: {len(audio_bytes)}, padding with zero")
+                logger.warning(f"Input audio has odd byte count: {len(audio_bytes)}, padding with zero")
                 audio_bytes = audio_bytes + b'\x00'  # Pad with one zero byte
             self._input_file.write(audio_bytes)
             self._input_file.flush()  # Ensure data is written to disk
@@ -82,7 +82,7 @@ class AudioRecorder:
         if self._output_file and audio_bytes:
             # Validate audio format: 16-bit = 2 bytes per sample
             if len(audio_bytes) % 2 != 0:
-                logger.warning(f"⚠️ Output audio has odd byte count: {len(audio_bytes)}, padding with zero")
+                logger.warning(f"Output audio has odd byte count: {len(audio_bytes)}, padding with zero")
                 audio_bytes = audio_bytes + b'\x00'  # Pad with one zero byte
             self._output_file.write(audio_bytes)
             self._output_file.flush()  # Ensure data is written to disk
@@ -103,7 +103,7 @@ class AudioRecorder:
             self._input_file.flush()  # Ensure header updates are written
             self._input_file.close()
             self._input_file = None
-            logger.info(f"✅ Stopped input recording: {self._input_bytes} bytes")
+            logger.info(f"Stopped input recording: {self._input_bytes} bytes")
             
         if self._output_file:
             # Flush any pending writes before updating header
@@ -118,7 +118,7 @@ class AudioRecorder:
             self._output_file.flush()  # Ensure header updates are written
             self._output_file.close()
             self._output_file = None
-            logger.info(f"✅ Stopped output recording: {self._output_bytes} bytes")
+            logger.info(f"Stopped output recording: {self._output_bytes} bytes")
             
     def _write_wav_header(self, file, sample_rate: int, channels: int, bits_per_sample: int):
         """

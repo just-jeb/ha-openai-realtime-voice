@@ -1,3 +1,6 @@
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Build](https://github.com/just-jeb/ha-openai-realtime-voice/actions/workflows/build-addon.yml/badge.svg)](https://github.com/just-jeb/ha-openai-realtime-voice/actions/workflows/build-addon.yml)
+
 # OpenAI Realtime Voice
 
 Voice interface for Home Assistant using the OpenAI Realtime API for low-latency, natural conversation. The device wakes on a phrase, streams speech to the addon, and plays back answers; web search is available for live information (e.g. current weather, today’s events) via the Responses API.
@@ -46,6 +49,12 @@ Voice interface for Home Assistant using the OpenAI Realtime API for low-latency
 
 1. Install and configure the addon (see server README). Required: `openai_api_key`. Optional: `web_search_api_key` for web search.
 2. Build and flash the ESP32 with the client config (see client README). Set `server_url` in secrets to your addon WebSocket URL (e.g. `ws://homeassistant.local:8080`).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report issues, submit pull requests, and set up a development environment.
+
+Found a bug? [Open an issue](https://github.com/just-jeb/ha-openai-realtime-voice/issues/new/choose).
 
 ## Acknowledgments
 

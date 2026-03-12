@@ -1,5 +1,5 @@
 name: OpenAI Realtime Voice
-version: "0.6.1"
+version: "1.0.0"
 slug: openai_realtime_voice
 description: WebSocket bridge from Voice PE to OpenAI Realtime API (voice Q&A and web search)
 url: https://github.com/just-jeb/ha-openai-realtime-voice
@@ -17,6 +17,9 @@ options:
   vad_prefix_padding_ms: 300
   vad_silence_duration_ms: 500
   instructions: "You are a friendly voice assistant. Keep answers clear and concise."
+  voice: "marin"
+  realtime_model: "gpt-realtime"
+  web_search_model: "gpt-4.1-mini"
   web_search_api_key: ""
   enable_recording: false
 schema:
@@ -26,6 +29,9 @@ schema:
   vad_prefix_padding_ms: int
   vad_silence_duration_ms: int
   instructions: str
+  voice: str
+  realtime_model: str
+  web_search_model: str
   web_search_api_key: password
   enable_recording: bool
 image: ghcr.io/just-jeb/ha-openai-realtime-voice/openai-realtime-voice-{arch}

@@ -1,0 +1,80 @@
+name: Bug Report
+description: Report a bug with the OpenAI Realtime Voice addon or client firmware
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please fill out the sections below so we can reproduce and fix it.
+
+  - type: input
+    id: ha-version
+    attributes:
+      label: Home Assistant version
+      placeholder: "e.g. 2025.3.0"
+    validations:
+      required: true
+
+  - type: input
+    id: addon-version
+    attributes:
+      label: Addon version
+      placeholder: "e.g. 1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: device-type
+    attributes:
+      label: Device type
+      options:
+        - Home Assistant Voice PE
+        - Other ESP32-S3
+        - N/A (server-only issue)
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Say wake word
+        2. Ask "..."
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: addon-logs
+    attributes:
+      label: Addon logs
+      description: Copy relevant logs from the addon log tab in Supervisor.
+      render: text
+
+  - type: textarea
+    id: client-logs
+    attributes:
+      label: Client logs (ESPHome)
+      description: Copy relevant logs from the ESPHome device log.
+      render: text
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Any other information (screenshots, config snippets, etc.)

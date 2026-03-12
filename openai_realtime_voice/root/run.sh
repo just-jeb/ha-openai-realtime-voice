@@ -8,6 +8,9 @@ VAD_THRESHOLD=$(bashio::config 'vad_threshold')
 VAD_PREFIX_PADDING_MS=$(bashio::config 'vad_prefix_padding_ms')
 VAD_SILENCE_DURATION_MS=$(bashio::config 'vad_silence_duration_ms')
 INSTRUCTIONS=$(bashio::config 'instructions')
+VOICE=$(bashio::config 'voice')
+REALTIME_MODEL=$(bashio::config 'realtime_model')
+WEB_SEARCH_MODEL=$(bashio::config 'web_search_model')
 ENABLE_RECORDING=$(bashio::config 'enable_recording')
 
 if [ -z "$OPENAI_API_KEY" ]; then
@@ -21,6 +24,9 @@ export VAD_THRESHOLD
 export VAD_PREFIX_PADDING_MS
 export VAD_SILENCE_DURATION_MS
 export INSTRUCTIONS
+export VOICE
+export REALTIME_MODEL
+export WEB_SEARCH_MODEL
 export ENABLE_RECORDING
 
 if [ -n "$WEB_SEARCH_API_KEY" ]; then
