@@ -86,7 +86,7 @@ class RealtimeVoiceBridge:
         self.vad_prefix_padding_ms = int(os.environ.get("VAD_PREFIX_PADDING_MS", "300"))
         self.vad_silence_duration_ms = int(os.environ.get("VAD_SILENCE_DURATION_MS", "500"))
         self.voice = os.environ.get("VOICE", "marin")
-        self.realtime_model = os.environ.get("REALTIME_MODEL", "gpt-realtime")
+        self.realtime_model = os.environ.get("REALTIME_MODEL", "gpt-realtime-mini")
         self.web_search_model = os.environ.get("WEB_SEARCH_MODEL", "gpt-4.1-mini")
         self.enable_recording = os.environ.get("ENABLE_RECORDING", "false").lower() == "true"
         self.recorder: Optional[AudioRecorder] = None
