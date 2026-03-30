@@ -1,6 +1,11 @@
 # OpenAI Realtime Voice — Client
 
-ESPHome configuration for the Home Assistant Voice PE (ESP32-S3) to connect to the OpenAI Realtime addon. The device listens for a wake word, streams mic audio to the addon over WebSocket, and plays back the assistant’s voice. Used with the server addon in this repo for voice Q&A (and optional web search).
+ESPHome configuration for the Home Assistant Voice PE (ESP32-S3). The device supports two voice pipelines selected by wake word or button press:
+
+- **OpenAI Q&A** ("Hey Jarvis" / "Hey Mycroft" / single-click): Streams audio to the addon over WebSocket for real-time voice Q&A and web search.
+- **HA Assist** ("Okay Nabu" / double-click): Routes to Home Assistant’s local Assist pipeline (Whisper → Assist → Piper) for smart home commands.
+
+Only one pipeline is active at a time. See the [root README](../README.md#ha-assist-pipeline-setup) for HA Assist setup instructions.
 
 Based on [esphome/home-assistant-voice-pe](https://github.com/esphome/home-assistant-voice-pe).
 
@@ -56,14 +61,14 @@ poetry run esphome upload voice_pe_config.yaml
 The main configuration file is `voice_pe_config.yaml`. Key settings:
 
 - Device name: Change `esphome.name` if desired
-- Wake words: Configured wake words ("Okay Nabu", "Hey Jarvis", "Hey Mycroft")
+- Wake words: "Okay Nabu" → HA Assist, "Hey Jarvis" / "Hey Mycroft" → OpenAI
 - Audio settings: Microphone and speaker configuration
 - LED ring: Visual feedback for device states
 
 ## Features
 
-- **Voice Assistant**: Real-time voice interaction with OpenAI Realtime API
-- **Wake Word Detection**: Multiple wake words supported
+- **Dual Pipeline**: OpenAI Q&A (via addon) and HA Assist (local smart home) on the same device
+- **Wake Word Routing**: Different wake words trigger different pipelines
 - **LED Feedback**: Visual status indicators (green = ready, blue = thinking, cyan = replying, red-yellow = quota error)
 - **Audio Feedback**: Chime on ready, cha-ching on quota error, optional wake sound
 - **Hardware Controls**: Button controls and mute switch

@@ -3,18 +3,27 @@
 ## Design Intent
 
 This is ESPHome firmware for the Home Assistant Voice PE (ESP32-S3). It
-listens for wake words locally, then streams microphone audio to the
-server addon over WebSocket and plays back the response through the
-speaker. All voice processing (STT, LLM, TTS) happens server-side —
-the ESP32 only handles audio I/O and wake word detection.
+supports two voice pipelines selected by wake word or button press:
+
+- **OpenAI Q&A** ("Hey Jarvis" / "Hey Mycroft" / single-click):
+  Streams audio to the server addon via `voice_assistant_websocket`.
+- **HA Assist** ("Okay Nabu" / double-click): Uses ESPHome's built-in
+  `voice_assistant` component → HA native API → local Assist pipeline
+  (Whisper STT → Assist → Piper TTS).
+
+Only one pipeline runs at a time. A global `active_pipeline` variable
+(0=none, 1=openai, 2=assist) enforces mutual exclusion — starting one
+stops the other. Wake word routing is handled in `on_wake_word_detected`
+using the `wake_word` trigger variable from `micro_wake_word`.
 
 ## Key Design Decisions
 
-**Microphone is never stopped.** `micro_wake_word` and
-`voice_assistant_websocket` share the same I2S microphone. When the
-voice assistant disconnects, the mic keeps running so wake word
-detection continues without interruption. This is intentional — stopping
-and restarting the mic causes glitches in wake word detection.
+**Microphone is never stopped.** `micro_wake_word`,
+`voice_assistant_websocket`, and `voice_assistant` all share the same
+I2S microphone via callback-based access. When either voice pipeline
+disconnects, the mic keeps running so wake word detection continues
+without interruption. This is intentional — stopping and restarting the
+mic causes glitches in wake word detection.
 
 **Mic is muted during bot speech.** While the bot is speaking
 (`is_bot_speaking()` — 500ms threshold since last received audio), the
@@ -39,11 +48,25 @@ uses a 60s timeout instead so web search can complete without killing
 the session. The timer resets when speaker audio is received, when
 `searching` is received, or when `replying` is received (audio is about to arrive).
 
-**Interrupt via wake word.** If the bot is speaking and the user says
-a wake word, the client sends `{"type":"interrupt"}` and clears its
-local audio queue/speaker. If the bot is NOT speaking and a wake word
-is detected, the client disconnects instead (session is over, user wants
-a fresh start). This is the wake word's dual role: start OR interrupt.
+**Interrupt via wake word (OpenAI pipeline).** If the bot is speaking
+and the user says a wake word mapped to OpenAI, the client sends
+`{"type":"interrupt"}` and clears its local audio queue/speaker. If the
+bot is NOT speaking and a wake word is detected, the client disconnects
+instead (session is over, user wants a fresh start).
+
+**Wake word routing.** `on_wake_word_detected` receives a `wake_word`
+string from the model manifest. "Okay Nabu" routes to HA Assist; all
+others route to OpenAI. The routing calls `start_ha_assist_pipeline` or
+`start_openai_pipeline` scripts which handle mutual exclusion (stopping
+the other pipeline if active) and mute/connection checks.
+
+**HA Assist pipeline.** Uses ESPHome's built-in `voice_assistant`
+component with `media_player: voice_media_player` for TTS playback.
+Audio flows through the existing announcement pipeline (FLAC, 48kHz).
+No separate speaker resampler needed. The pipeline is assigned to the
+device in HA UI (Settings → Devices → Configure). Requires `api:`
+connection to HA, Whisper addon (STT), Piper addon (TTS), and entities
+exposed to Assist.
 
 **Audio resampling is split across layers.** The mic captures at 16kHz
 (required by `micro_wake_word`). The C++ component resamples to 24kHz
@@ -148,7 +171,8 @@ When you change the C++ component (`.cpp`, `.h`, or `__init__.py`), bump the ver
 
 Update this file when:
 - The audio format or resampling chain changes
-- Wake word behavior or models change
+- Wake word behavior, models, or routing logic changes
+- Pipeline selection or mutual exclusion logic changes
 - The interrupt/disconnect protocol changes
 - New ESPHome actions or conditions are added to the component
 - Buffer sizes or timing constants are retuned
