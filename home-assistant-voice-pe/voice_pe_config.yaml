@@ -167,6 +167,11 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
+  # Active pipeline: 0=none, 1=openai, 2=ha_assist
+  - id: active_pipeline
+    type: int
+    restore_value: no
+    initial_value: '0'
 
 switch:
   # Master mute switch
@@ -227,53 +232,17 @@ binary_sensor:
     on_release:
       - script.execute: control_leds
     on_multi_click:
-      # Simple Click: Start/Stop Voice Assistant
+      # Simple Click: Start/Stop OpenAI Voice Assistant
       - timing:
           - ON for at most 1s
           - OFF for at least 0.25s
         then:
-          - logger.log:
-              format: "Button clicked - checking conditions"
-              level: INFO
           - if:
               condition:
                 lambda: return !id(init_in_progress);
               then:
-                - logger.log:
-                    format: "init_in_progress is false, checking voice assistant state"
-                    level: INFO
-                - if:
-                    condition:
-                      voice_assistant_websocket.is_running:
-                        id: voice_assistant_ws
-                    then:
-                      - logger.log:
-                          format: "Voice assistant is running - stopping"
-                          level: INFO
-                      - voice_assistant_websocket.stop:
-                          id: voice_assistant_ws
-                    else:
-                      - logger.log:
-                          format: "Voice assistant is not running - checking mute switch"
-                          level: INFO
-                      - if:
-                          condition:
-                            switch.is_off: master_mute_switch
-                          then:
-                            - logger.log:
-                                format: "Mute switch is OFF - starting voice assistant"
-                                level: INFO
-                            - voice_assistant_websocket.start:
-                                id: voice_assistant_ws
-                          else:
-                            - logger.log:
-                                format: "Voice assistant blocked: device is muted"
-                                level: WARN
-              else:
-                - logger.log:
-                    format: "init_in_progress is true - blocking voice assistant start"
-                    level: INFO
-      # Double Click
+                - script.execute: start_openai_pipeline
+      # Double Click: Start/Stop HA Assist pipeline
       - timing:
           - ON for at most 1s
           - OFF for at most 0.25s
@@ -284,9 +253,7 @@ binary_sensor:
               condition:
                 lambda: return !id(init_in_progress);
               then:
-                - event.trigger:
-                    id: button_press_event
-                    event_type: "double_press"
+                - script.execute: start_ha_assist_pipeline
       # Triple Click
       - timing:
           - ON for at most 1s
@@ -927,6 +894,83 @@ script:
           media_file: error_quota_sound
           announcement: true
 
+  # Start OpenAI pipeline (stop HA Assist first if active)
+  - id: start_openai_pipeline
+    then:
+      # Stop HA Assist if it's running
+      - if:
+          condition:
+            lambda: 'return id(active_pipeline) == 2;'
+          then:
+            - voice_assistant.stop:
+                id: ha_voice_assistant
+      # If OpenAI is already running, handle interrupt/stop; otherwise start
+      - if:
+          condition:
+            voice_assistant_websocket.is_running:
+              id: voice_assistant_ws
+          then:
+            - if:
+                condition:
+                  voice_assistant_websocket.is_bot_speaking:
+                    id: voice_assistant_ws
+                then:
+                  - voice_assistant_websocket.interrupt:
+                      id: voice_assistant_ws
+                else:
+                  - voice_assistant_websocket.stop:
+                      id: voice_assistant_ws
+          else:
+            - if:
+                condition:
+                  switch.is_off: master_mute_switch
+                then:
+                  - voice_assistant_websocket.start:
+                      id: voice_assistant_ws
+                else:
+                  - logger.log:
+                      format: "OpenAI pipeline blocked: device is muted"
+                      level: WARN
+
+  # Start HA Assist pipeline (stop OpenAI first if active)
+  - id: start_ha_assist_pipeline
+    then:
+      # Check HA API connection first
+      - if:
+          condition:
+            not:
+              api.connected:
+          then:
+            - logger.log:
+                format: "HA Assist blocked: Home Assistant not connected"
+                level: WARN
+            - lambda: id(voice_assistant_phase) = ${voice_assist_error_phase_id};
+            - script.execute: control_leds
+            - delay: 2s
+            - lambda: id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};
+            - script.execute: control_leds
+          else:
+            # Stop OpenAI if it's running
+            - if:
+                condition:
+                  voice_assistant_websocket.is_running:
+                    id: voice_assistant_ws
+                then:
+                  - voice_assistant_websocket.stop:
+                      id: voice_assistant_ws
+            # Check mute
+            - if:
+                condition:
+                  switch.is_off: master_mute_switch
+                then:
+                  - lambda: 'id(active_pipeline) = 2;'
+                  - voice_assistant.start:
+                      id: ha_voice_assistant
+                else:
+                  - logger.log:
+                      format: "HA Assist blocked: device is muted"
+                      level: WARN
+
 # I2S Audio Input (Microphone) - Voice PE Hardware
 i2s_audio:
   - id: i2s_output
@@ -1044,9 +1088,7 @@ media_player:
       if:
         condition:
           and:
-            - not:
-                voice_assistant_websocket.is_running:
-                  id: voice_assistant_ws
+            - lambda: 'return id(active_pipeline) == 0;'
             - not:
                 media_player.is_announcing:
         then:
@@ -1083,29 +1125,14 @@ micro_wake_word:
               then:
                 - script.execute: play_wake_sound
                 - delay: 300ms
-          # Handle wake word based on bot speaking state
+          # Route based on wake word: "Okay Nabu" → HA Assist, others → OpenAI
           - if:
               condition:
-                voice_assistant_websocket.is_running:
-                  id: voice_assistant_ws
+                lambda: 'return wake_word == "Okay Nabu";'
               then:
-                # Voice assistant is running - check if bot is speaking
-                - if:
-                    condition:
-                      voice_assistant_websocket.is_bot_speaking:
-                        id: voice_assistant_ws
-                    then:
-                      # Bot is speaking - interrupt instead of disconnect
-                      - voice_assistant_websocket.interrupt:
-                          id: voice_assistant_ws
-                    else:
-                      # Bot not speaking - stop voice assistant (disconnect)
-                      - voice_assistant_websocket.stop:
-                          id: voice_assistant_ws
+                - script.execute: start_ha_assist_pipeline
               else:
-                # Voice assistant not running - start it
-                - voice_assistant_websocket.start:
-                    id: voice_assistant_ws
+                - script.execute: start_openai_pipeline
 
 # External Components - Custom voice_assistant_websocket component
 external_components:
@@ -1140,7 +1167,9 @@ voice_assistant_websocket:
   
   # State callbacks for LED control (phase IDs: 2=waiting, 3=listening, 4=thinking, 5=replying)
   on_connected:
-    - lambda: id(init_in_progress) = false;
+    - lambda: |-
+        id(init_in_progress) = false;
+        id(active_pipeline) = 1;
     - lambda: id(voice_assistant_phase) = ${voice_assist_waiting_for_command_phase_id};  # Yellow: connecting to OpenAI
     - script.execute: control_leds
     # Apply ducking to media when voice assistant starts
@@ -1165,7 +1194,9 @@ voice_assistant_websocket:
     - lambda: id(voice_assistant_phase) = ${voice_assist_searching_phase_id};  # Blue-green: background tool + listening
     - script.execute: control_leds
   on_disconnected:
-    - lambda: id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};
+    - lambda: |-
+        id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};
+        id(active_pipeline) = 0;
     - script.execute: control_leds
     # Ensure micro_wake_word continues running after disconnect
     - micro_wake_word.start:
@@ -1176,7 +1207,9 @@ voice_assistant_websocket:
         decibel_reduction: 0
         duration: 1.0s
   on_stopped:
-    - lambda: id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};
+    - lambda: |-
+        id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};
+        id(active_pipeline) = 0;
     - script.execute: control_leds
     # Restore media volume when voice assistant stops
     - mixer_speaker.apply_ducking:
@@ -1188,7 +1221,9 @@ voice_assistant_websocket:
         condition:
           lambda: return !id(init_in_progress);
         then:
-          - lambda: id(voice_assistant_phase) = ${voice_assist_error_phase_id};
+          - lambda: |-
+              id(voice_assistant_phase) = ${voice_assist_error_phase_id};
+              id(active_pipeline) = 0;
           - script.execute: control_leds
           # Restore media volume on error
           - mixer_speaker.apply_ducking:
@@ -1203,6 +1238,51 @@ voice_assistant_websocket:
     - delay: 4s
     - voice_assistant_websocket.stop:
         id: voice_assistant_ws
+
+# HA Assist Voice Pipeline (local smart home commands)
+# Uses ESPHome's built-in voice_assistant component → HA native API → Assist Pipeline
+# Pipeline is assigned to the device in HA UI: Settings → Devices → Configure
+voice_assistant:
+  id: ha_voice_assistant
+  microphone:
+    microphone: i2s_mics
+    channels: 1
+  media_player: voice_media_player
+  use_wake_word: false
+  noise_suppression_level: 2
+  auto_gain: 31dBFS
+  volume_multiplier: 1.0
+  on_listening:
+    - lambda: 'id(voice_assistant_phase) = ${voice_assist_listening_for_command_phase_id};'
+    - script.execute: control_leds
+    - mixer_speaker.apply_ducking:
+        id: media_mixing_input
+        decibel_reduction: 20
+        duration: 0.0s
+  on_stt_end:
+    - lambda: 'id(voice_assistant_phase) = ${voice_assist_thinking_phase_id};'
+    - script.execute: control_leds
+  on_tts_start:
+    - lambda: 'id(voice_assistant_phase) = ${voice_assist_replying_phase_id};'
+    - script.execute: control_leds
+  on_end:
+    - lambda: |-
+        id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};
+        id(active_pipeline) = 0;
+    - script.execute: control_leds
+    - mixer_speaker.apply_ducking:
+        id: media_mixing_input
+        decibel_reduction: 0
+        duration: 1.0s
+  on_error:
+    - lambda: |-
+        id(voice_assistant_phase) = ${voice_assist_error_phase_id};
+        id(active_pipeline) = 0;
+    - script.execute: control_leds
+    - mixer_speaker.apply_ducking:
+        id: media_mixing_input
+        decibel_reduction: 0
+        duration: 1.0s
 
 # Voice Kit Component - Voice PE Hardware (XMOS Firmware)
 # The XMOS XU316 chip has built-in audio processing support:

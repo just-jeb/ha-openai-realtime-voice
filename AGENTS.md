@@ -9,19 +9,38 @@ A voice system for Home Assistant using the OpenAI Realtime API. Two parts talk 
 
 Each component has its own `AGENTS.md` with component-specific guidance.
 
-## Architecture
+## Dual Pipeline Architecture
+
+The device supports two voice pipelines, selected by wake word or button press:
+
+| Pipeline | Trigger | Path | Use case |
+|----------|---------|------|----------|
+| **OpenAI Q&A** | "Hey Jarvis", "Hey Mycroft", single-click | `voice_assistant_websocket` → HA addon → OpenAI Realtime API | General Q&A, web search |
+| **HA Assist** | "Okay Nabu", double-click | ESPHome `voice_assistant` → HA native API → Assist pipeline | Local smart home commands |
 
 ```
-ESP32-S3 Voice PE                    HA Addon
-┌──────────────────┐  WebSocket     ┌─────────────────────────┐
-│ micro_wake_word  │   :8080       │  RealtimeVoiceBridge    │
-│       ↓          │  ── PCM ───►  │    client_ws ↔ openai_ws │
-│ voice_assistant_ │               │    (one Realtime session│
-│ websocket (C++)  │  ◄── PCM ──   │     per connection)     │
-│       ↓          │  ◄── JSON ──  │    + search_web → Resp. │
-│ I2S Speaker      │               │         API             │
-└──────────────────┘               └─────────────────────────┘
+ESP32-S3 Voice PE
+┌──────────────────────┐
+│   micro_wake_word    │
+│         ↓            │
+│  wake word routing   │
+│    ┌────┴────┐       │                    HA Addon
+│    ▼         ▼       │  WebSocket     ┌─────────────────────────┐
+│  voice_     voice_   │   :8080       │  RealtimeVoiceBridge    │
+│  assistant  assistant│  ── PCM ───►  │    client_ws ↔ openai_ws │
+│  (built-in) _websocket│              │    (one Realtime session│
+│    │         │       │  ◄── PCM ──   │     per connection)     │
+│    ▼         ▼       │  ◄── JSON ──  │    + search_web → Resp. │
+│  HA API   I2S Speaker│               │         API             │
+│    │                 │               └─────────────────────────┘
+│    ▼                 │
+│  Assist Pipeline     │
+│  (Whisper→Assist→    │
+│   Piper, all local)  │
+└──────────────────────┘
 ```
+
+Only one pipeline runs at a time. Starting one stops the other (mutual exclusion via `active_pipeline` global in YAML).
 
 ## Contract between client and server
 
@@ -61,6 +80,27 @@ The addon lives in the repo under `openai_realtime_voice/` (directory name match
 ### Client firmware
 
 The ESPHome config in `home-assistant-voice-pe/` pulls the `voice_assistant_websocket` component from this repo via git on compile. See `home-assistant-voice-pe/AGENTS.md` for details.
+
+### HA Assist pipeline (local smart home commands)
+
+The HA Assist pipeline runs entirely through Home Assistant's built-in voice infrastructure. Setup:
+
+1. **Install addons** in HAOS:
+   - **Whisper** (local STT) — Settings → Add-ons → "Whisper". Config: model `tiny-int8` or `base-int8`, set language.
+   - **Piper** (local TTS) — Settings → Add-ons → "Piper". Config: select a voice (e.g. `en_US-lessac-medium`).
+   - openWakeWord is **not needed** — wake word detection runs on-device.
+
+2. **Create a voice pipeline** — Settings → Voice assistants → Add assistant:
+   - Conversation agent: Home Assistant (built-in, handles intents)
+   - Speech-to-text: Whisper
+   - Text-to-speech: Piper
+   - Wake word: leave empty (on-device)
+
+3. **Assign pipeline to device** — Settings → Devices → select Voice PE → Configure → select the pipeline.
+
+4. **Expose entities** — Settings → Voice assistants → Expose tab. Select which entities (lights, switches, climate, etc.) Assist can control. Most entities are **not exposed by default**.
+
+5. **Device must be adopted** in HA — Settings → Devices → ESPHome. The `api:` connection (already in firmware) is required for the Assist pipeline.
 
 ## Owner’s deployed setup
 

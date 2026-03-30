@@ -8,9 +8,9 @@ Voice interface for Home Assistant using the OpenAI Realtime API for low-latency
 ## Purpose and intended use
 
 - **Primary use:** Stationary voice Q&A device — you can tune it (e.g. short answers, language, tone) via the addon’s `instructions`. Common use cases include a family/kids device or a general-purpose voice assistant.
-- **Voice path:** Wake word on device → WebSocket → HA addon → OpenAI Realtime API (speech-to-speech). No smart home control in this pipeline.
+- **Voice path (OpenAI):** "Hey Jarvis" / "Hey Mycroft" / button → WebSocket → HA addon → OpenAI Realtime API (speech-to-speech).
 - **Web search:** Handled inside the addon via a `search_web` tool that calls the OpenAI Responses API (optional separate API key).
-- **Smart home:** Can be a separate, fully local HA voice pipeline (e.g. different wake word, Whisper + Piper + Assist). Not part of this addon.
+- **Smart home (HA Assist):** "Okay Nabu" / double-click → ESPHome built-in `voice_assistant` → HA Assist pipeline (Whisper STT → Assist → Piper TTS). Fully local, no cloud. See [HA Assist setup](#ha-assist-pipeline-setup) below.
 
 ## Components
 
@@ -29,8 +29,9 @@ Voice interface for Home Assistant using the OpenAI Realtime API for low-latency
 
 ### Client (Voice PE)
 
-- Wake word detection on device (e.g. “Okay Nabu”, “Hey Jarvis”).
-- Real-time voice over WebSocket to the addon.
+- Wake word detection on device with wake-word-based pipeline routing.
+- **OpenAI pipeline:** “Hey Jarvis” / “Hey Mycroft” / single-click → real-time voice over WebSocket to the addon.
+- **HA Assist pipeline:** “Okay Nabu” / double-click → local smart home commands via HA Assist.
 - Interrupt by saying the wake word while the assistant is speaking.
 - LED feedback, button, mute switch, AGC, AEC.
 
@@ -49,6 +50,30 @@ Voice interface for Home Assistant using the OpenAI Realtime API for low-latency
 
 1. Install and configure the addon (see server README). Required: `openai_api_key`. Optional: `web_search_api_key` for web search.
 2. Build and flash the ESP32 with the client config (see client README). Set `server_url` in secrets to your addon WebSocket URL (e.g. `ws://homeassistant.local:8080`).
+
+## HA Assist pipeline setup
+
+The HA Assist pipeline handles local smart home commands ("turn on the kitchen lights", "set thermostat to 72") entirely through Home Assistant — no cloud needed.
+
+### Prerequisites
+
+1. **Whisper addon** (local speech-to-text): Settings → Add-ons → Add-on Store → "Whisper". Configure: model `tiny-int8` or `base-int8`, set language.
+2. **Piper addon** (local text-to-speech): Settings → Add-ons → Add-on Store → "Piper". Configure: select a voice (e.g. `en_US-lessac-medium`).
+
+openWakeWord is **not needed** — wake word detection runs on the device.
+
+### Configuration
+
+1. **Create a voice pipeline:** Settings → Voice assistants → Add assistant. Set conversation agent to "Home Assistant", STT to Whisper, TTS to Piper. Leave wake word empty.
+2. **Assign pipeline to device:** Settings → Devices → select your Voice PE → Configure → select the pipeline you created.
+3. **Expose entities:** Settings → Voice assistants → Expose tab. Select which entities (lights, switches, climate, etc.) Assist can control. Most entities are **not exposed by default**.
+
+The device must be adopted in Home Assistant (Settings → Devices → ESPHome) for the Assist pipeline to work.
+
+### Limitations
+
+- HA's built-in conversation agent handles basic commands only. For complex queries, consider the [Extended OpenAI Conversation](https://github.com/jekalmin/extended_openai_conversation) custom integration.
+- Latency is higher than the OpenAI pipeline (Whisper transcription + Piper synthesis vs. streaming speech-to-speech).
 
 ## Contributing
 
