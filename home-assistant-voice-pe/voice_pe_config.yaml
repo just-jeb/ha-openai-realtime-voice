@@ -1257,13 +1257,15 @@ voice_assistant_websocket:
 # Pipeline is assigned to the device in HA UI: Settings → Devices → Configure
 voice_assistant:
   id: ha_voice_assistant
+  # Channel 0 is the XMOS ASR channel, already gain-controlled and noise-suppressed,
+  # so ESP-side processing stays off (matches stock Voice PE firmware 25.11.0)
   microphone:
     microphone: i2s_mics
-    channels: 1
+    channels: 0
   media_player: voice_media_player
   use_wake_word: false
-  noise_suppression_level: 2
-  auto_gain: 31dBFS
+  noise_suppression_level: 0
+  auto_gain: 0dBFS
   volume_multiplier: 1.0
   on_listening:
     - lambda: 'id(voice_assistant_phase) = ${voice_assist_listening_for_command_phase_id};'

@@ -9,7 +9,7 @@ supports two voice pipelines selected by wake word or button press:
   Streams audio to the server addon via `voice_assistant_websocket`.
 - **HA Assist** ("Hey Mycroft" / double-click): Uses ESPHome's built-in
   `voice_assistant` component → HA native API → local Assist pipeline
-  (Whisper STT → Assist → Piper TTS).
+  (Speech-to-Phrase STT → Assist → Piper TTS).
 
 Only one pipeline runs at a time. A global `active_pipeline` variable
 (0=none, 1=openai, 2=assist) enforces mutual exclusion — starting one
@@ -67,9 +67,9 @@ the other pipeline if active) and mute/connection checks.
 **Wake word attribution.** `on_wake_word_detected` logs the phrase at
 INFO and fires the HA event `esphome.wake_word_detected` with data
 `wake_word: <phrase>` via `homeassistant.event`. This needs
-`homeassistant_services: true` under `api:`, and the device must be
-allowed to perform Home Assistant actions in the ESPHome integration's
-options.
+`homeassistant_services: true` under `api:`. HA accepts `esphome.*`
+events without the integration option "Allow the device to perform Home
+Assistant actions".
 
 **Wake word models are enabled on boot.** ESPHome enables only the first
 `micro_wake_word` model on a fresh device, so `on_boot` calls
@@ -80,8 +80,21 @@ component with `media_player: voice_media_player` for TTS playback.
 Audio flows through the existing announcement pipeline (FLAC, 48kHz).
 No separate speaker resampler needed. The pipeline is assigned to the
 device in HA UI (Settings → Devices → Configure). Requires `api:`
-connection to HA, Whisper addon (STT), Piper addon (TTS), and entities
-exposed to Assist.
+connection to HA, an STT addon (Speech-to-Phrase), Piper addon (TTS),
+and entities exposed to Assist.
+
+**Assist takes XMOS channel 0.** The XMOS chip outputs two channels:
+channel 0 is processed for speech recognition (AGC and noise
+suppression), channel 1 is the one `micro_wake_word` listens on. The
+`voice_assistant` microphone must be channel 0 with ESP-side
+`noise_suppression_level: 0` and `auto_gain: 0dBFS`, as in the stock
+Voice PE firmware. On channel 1 with ESP-side processing on, HA's voice
+detection often missed speech entirely and the first word of a command
+came through garbled.
+
+**`esphome upload` does not compile.** It flashes the last binary that
+was built. Use `run` (compile, then upload) after changing the YAML; a
+plain `upload` silently re-flashes the old firmware.
 
 **Audio resampling is split across layers.** The mic captures at 16kHz
 (required by `micro_wake_word`). The C++ component resamples to 24kHz
