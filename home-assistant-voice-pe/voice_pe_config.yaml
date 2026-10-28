@@ -56,6 +56,9 @@ esphome:
       - script.execute: control_leds
       - delay: 1s
       - switch.turn_on: internal_speaker_amp
+      # ESPHome enables only the first model on a fresh device; enable both explicitly
+      - micro_wake_word.enable_model: okay_nabu
+      - micro_wake_word.enable_model: hey_mycroft
       - micro_wake_word.start:
           id: mww
       - lambda: id(init_in_progress) = false;
@@ -110,6 +113,8 @@ api:
   encryption:
     key: !secret api_encryption_key
   reboot_timeout: 0s
+  # Required for homeassistant.event (wake word attribution events)
+  homeassistant_services: true
   on_client_connected:
     - script.execute: control_leds
   on_client_disconnected:
@@ -1108,12 +1113,20 @@ micro_wake_word:
   models:
     - model: https://github.com/kahrendt/microWakeWord/releases/download/okay_nabu_20241226.3/okay_nabu.json
       id: okay_nabu
-    - model: hey_jarvis
-      id: hey_jarvis
     - model: hey_mycroft
       id: hey_mycroft
+      probability_cutoff: 99%
   vad:
   on_wake_word_detected:
+    # Attribution for false wakes: INFO log plus an HA event (esphome.wake_word_detected)
+    - logger.log:
+        level: INFO
+        format: "Wake word detected: %s"
+        args: ['wake_word.c_str()']
+    - homeassistant.event:
+        event: esphome.wake_word_detected
+        data:
+          wake_word: !lambda 'return wake_word;'
     - if:
         condition:
           switch.is_off: master_mute_switch
@@ -1125,10 +1138,10 @@ micro_wake_word:
               then:
                 - script.execute: play_wake_sound
                 - delay: 300ms
-          # Route based on wake word: "Okay Nabu" → HA Assist, others → OpenAI
+          # Route on the manifest phrase: "Hey Mycroft" → HA Assist, "Okay Nabu" → OpenAI
           - if:
               condition:
-                lambda: 'return wake_word == "Okay Nabu";'
+                lambda: 'return wake_word == "Hey Mycroft";'
               then:
                 - script.execute: start_ha_assist_pipeline
               else:
