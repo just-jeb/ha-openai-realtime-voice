@@ -5,9 +5,9 @@
 This is ESPHome firmware for the Home Assistant Voice PE (ESP32-S3). It
 supports two voice pipelines selected by wake word or button press:
 
-- **OpenAI Q&A** ("Hey Jarvis" / "Hey Mycroft" / single-click):
+- **OpenAI (ChatGPT)** ("Okay Nabu" / single-click):
   Streams audio to the server addon via `voice_assistant_websocket`.
-- **HA Assist** ("Okay Nabu" / double-click): Uses ESPHome's built-in
+- **HA Assist** ("Hey Mycroft" / double-click): Uses ESPHome's built-in
   `voice_assistant` component → HA native API → local Assist pipeline
   (Whisper STT → Assist → Piper TTS).
 
@@ -55,10 +55,25 @@ bot is NOT speaking and a wake word is detected, the client disconnects
 instead (session is over, user wants a fresh start).
 
 **Wake word routing.** `on_wake_word_detected` receives a `wake_word`
-string from the model manifest. "Okay Nabu" routes to HA Assist; all
-others route to OpenAI. The routing calls `start_ha_assist_pipeline` or
+string: the `wake_word` phrase from the model manifest, not the model
+id ("Okay Nabu", "Hey Mycroft"; source: `micro_wake_word.cpp` triggers
+with `WakeWordModel::get_wake_word()`). "Hey Mycroft" routes to HA Assist;
+all others route to OpenAI. "Hey Mycroft" runs with
+`probability_cutoff: 99%`; "Okay Nabu" uses its manifest default. The
+routing calls `start_ha_assist_pipeline` or
 `start_openai_pipeline` scripts which handle mutual exclusion (stopping
 the other pipeline if active) and mute/connection checks.
+
+**Wake word attribution.** `on_wake_word_detected` logs the phrase at
+INFO and fires the HA event `esphome.wake_word_detected` with data
+`wake_word: <phrase>` via `homeassistant.event`. This needs
+`homeassistant_services: true` under `api:`, and the device must be
+allowed to perform Home Assistant actions in the ESPHome integration's
+options.
+
+**Wake word models are enabled on boot.** ESPHome enables only the first
+`micro_wake_word` model on a fresh device, so `on_boot` calls
+`micro_wake_word.enable_model` for both `okay_nabu` and `hey_mycroft`.
 
 **HA Assist pipeline.** Uses ESPHome's built-in `voice_assistant`
 component with `media_player: voice_media_player` for TTS playback.

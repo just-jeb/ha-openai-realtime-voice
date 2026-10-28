@@ -5,9 +5,11 @@
 ### Features
 
 - **Dual pipeline support** — the device now supports two voice pipelines:
-  - **OpenAI Q&A**: "Hey Jarvis" / "Hey Mycroft" / single-click button (unchanged).
-  - **HA Assist**: "Okay Nabu" / double-click button → local Home Assistant Assist pipeline (Whisper STT → Assist → Piper TTS) for smart home commands.
+  - **OpenAI (ChatGPT)**: "Okay Nabu" / single-click button.
+  - **HA Assist**: "Hey Mycroft" / double-click button → local Home Assistant Assist pipeline (Whisper STT → Assist → Piper TTS) for smart home commands.
 - Wake word routing based on `micro_wake_word`'s detected wake word string.
+- "Hey Jarvis" is no longer a wake word. "Hey Mycroft" uses a 99% probability cutoff to reduce false wakes.
+- Each detected wake word is logged at INFO and fired as the Home Assistant event `esphome.wake_word_detected` (data: `wake_word`) so false wakes can be attributed. Requires `homeassistant_services: true` under `api:`.
 - Mutual exclusion — only one pipeline active at a time; starting one stops the other.
 - HA Assist uses ESPHome's built-in `voice_assistant` component with the existing media player for TTS.
 

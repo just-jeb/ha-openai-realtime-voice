@@ -15,8 +15,8 @@ The device supports two voice pipelines, selected by wake word or button press:
 
 | Pipeline | Trigger | Path | Use case |
 |----------|---------|------|----------|
-| **OpenAI Q&A** | "Hey Jarvis", "Hey Mycroft", single-click | `voice_assistant_websocket` → HA addon → OpenAI Realtime API | General Q&A, web search |
-| **HA Assist** | "Okay Nabu", double-click | ESPHome `voice_assistant` → HA native API → Assist pipeline | Local smart home commands |
+| **OpenAI (ChatGPT)** | "Okay Nabu", single-click | `voice_assistant_websocket` → HA addon → OpenAI Realtime API | General Q&A, web search |
+| **HA Assist** | "Hey Mycroft" (probability cutoff 99%), double-click | ESPHome `voice_assistant` → HA native API → Assist pipeline | Local smart home commands |
 
 ```
 ESP32-S3 Voice PE
@@ -66,6 +66,8 @@ Both sides must follow this. If one side changes, the other may need updates.
 **Client:** Resample mic 16 kHz → 24 kHz before send; resample received 24 kHz → 48 kHz for the speaker.
 
 **Server:** Encode PCM to base64 and send as `input_audio_buffer.append`; decode `response.output_audio.delta` (Realtime API GA) and send raw PCM to the client. Tool calls such as `search_web` run in the background so the event loop stays responsive.
+
+Every detection is logged at INFO (`Wake word detected: <phrase>`) and fired as the Home Assistant event `esphome.wake_word_detected` with data `wake_word: <phrase>`, so a false wake can be traced to the word that caused it. The event needs `homeassistant_services: true` under `api:` in the ESPHome config, and HA must allow the device to perform actions (ESPHome integration options: Allow the device to perform Home Assistant actions).
 
 ## Installation and deployment
 

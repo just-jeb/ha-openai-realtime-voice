@@ -2,8 +2,8 @@
 
 ESPHome configuration for the Home Assistant Voice PE (ESP32-S3). The device supports two voice pipelines selected by wake word or button press:
 
-- **OpenAI Q&A** ("Hey Jarvis" / "Hey Mycroft" / single-click): Streams audio to the addon over WebSocket for real-time voice Q&A and web search.
-- **HA Assist** ("Okay Nabu" / double-click): Routes to Home Assistant’s local Assist pipeline (Whisper → Assist → Piper) for smart home commands.
+- **OpenAI (ChatGPT)** ("Okay Nabu" / single-click): Streams audio to the addon over WebSocket for real-time voice Q&A and web search.
+- **HA Assist** ("Hey Mycroft" / double-click): Routes to Home Assistant’s local Assist pipeline (Whisper → Assist → Piper) for smart home commands.
 
 Only one pipeline is active at a time. See the [root README](../README.md#ha-assist-pipeline-setup) for HA Assist setup instructions.
 
@@ -61,7 +61,8 @@ poetry run esphome upload voice_pe_config.yaml
 The main configuration file is `voice_pe_config.yaml`. Key settings:
 
 - Device name: Change `esphome.name` if desired
-- Wake words: "Okay Nabu" → HA Assist, "Hey Jarvis" / "Hey Mycroft" → OpenAI
+- Wake words: "Okay Nabu" → OpenAI (ChatGPT), "Hey Mycroft" (probability cutoff 99%) → HA Assist
+- Wake word events: each detection fires the HA event `esphome.wake_word_detected` (`wake_word` data) and logs at INFO
 - Audio settings: Microphone and speaker configuration
 - LED ring: Visual feedback for device states
 

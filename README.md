@@ -8,9 +8,9 @@ Voice interface for Home Assistant using the OpenAI Realtime API for low-latency
 ## Purpose and intended use
 
 - **Primary use:** Stationary voice Q&A device — you can tune it (e.g. short answers, language, tone) via the addon’s `instructions`. Common use cases include a family/kids device or a general-purpose voice assistant.
-- **Voice path (OpenAI):** "Hey Jarvis" / "Hey Mycroft" / button → WebSocket → HA addon → OpenAI Realtime API (speech-to-speech).
+- **Voice path (OpenAI):** "Okay Nabu" / button → WebSocket → HA addon → OpenAI Realtime API (speech-to-speech).
 - **Web search:** Handled inside the addon via a `search_web` tool that calls the OpenAI Responses API (optional separate API key).
-- **Smart home (HA Assist):** "Okay Nabu" / double-click → ESPHome built-in `voice_assistant` → HA Assist pipeline (Whisper STT → Assist → Piper TTS). Fully local, no cloud. See [HA Assist setup](#ha-assist-pipeline-setup) below.
+- **Smart home (HA Assist):** "Hey Mycroft" (99% cutoff) / double-click → ESPHome built-in `voice_assistant` → HA Assist pipeline (Whisper STT → Assist → Piper TTS). Fully local, no cloud. See [HA Assist setup](#ha-assist-pipeline-setup) below.
 
 ## Components
 
@@ -30,8 +30,9 @@ Voice interface for Home Assistant using the OpenAI Realtime API for low-latency
 ### Client (Voice PE)
 
 - Wake word detection on device with wake-word-based pipeline routing.
-- **OpenAI pipeline:** “Hey Jarvis” / “Hey Mycroft” / single-click → real-time voice over WebSocket to the addon.
-- **HA Assist pipeline:** “Okay Nabu” / double-click → local smart home commands via HA Assist.
+- **OpenAI pipeline:** “Okay Nabu” / single-click → real-time voice over WebSocket to the addon.
+- **HA Assist pipeline:** “Hey Mycroft” (99% probability cutoff) / double-click → local smart home commands via HA Assist.
+- Each wake word detection is logged and fired as the HA event `esphome.wake_word_detected` (`wake_word` data) for tracing false wakes.
 - Interrupt by saying the wake word while the assistant is speaking.
 - LED feedback, button, mute switch, AGC, AEC.
 
