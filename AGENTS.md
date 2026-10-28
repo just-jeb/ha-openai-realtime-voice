@@ -35,7 +35,7 @@ ESP32-S3 Voice PE
 │    │                 │               └─────────────────────────┘
 │    ▼                 │
 │  Assist Pipeline     │
-│  (Whisper→Assist→    │
+│  (STT→Assist→        │
 │   Piper, all local)  │
 └──────────────────────┘
 ```
@@ -67,7 +67,7 @@ Both sides must follow this. If one side changes, the other may need updates.
 
 **Server:** Encode PCM to base64 and send as `input_audio_buffer.append`; decode `response.output_audio.delta` (Realtime API GA) and send raw PCM to the client. Tool calls such as `search_web` run in the background so the event loop stays responsive.
 
-Every detection is logged at INFO (`Wake word detected: <phrase>`) and fired as the Home Assistant event `esphome.wake_word_detected` with data `wake_word: <phrase>`, so a false wake can be traced to the word that caused it. The event needs `homeassistant_services: true` under `api:` in the ESPHome config, and HA must allow the device to perform actions (ESPHome integration options: Allow the device to perform Home Assistant actions).
+Every detection is logged at INFO (`Wake word detected: <phrase>`) and fired as the Home Assistant event `esphome.wake_word_detected` with data `wake_word: <phrase>`, so a false wake can be traced to the word that caused it. The event needs `homeassistant_services: true` under `api:` in the ESPHome config. HA accepts `esphome.*` events from the device without the integration option "Allow the device to perform Home Assistant actions", which stays off.
 
 ## Installation and deployment
 
@@ -88,13 +88,13 @@ The ESPHome config in `home-assistant-voice-pe/` pulls the `voice_assistant_webs
 The HA Assist pipeline runs entirely through Home Assistant's built-in voice infrastructure. Setup:
 
 1. **Install addons** in HAOS:
-   - **Whisper** (local STT) — Settings → Add-ons → "Whisper". Config: model `tiny-int8` or `base-int8`, set language.
+   - **Speech-to-Phrase** (local STT) — Settings → Add-ons → "Speech-to-Phrase". Recognizes only fixed templates filled with exposed entity names and aliases; in English, "turn on/off <name>" covers lights, switches, fans, media players and input booleans, while scenes only take "activate <name>". Whisper is the free-form alternative and mishears short commands more often.
    - **Piper** (local TTS) — Settings → Add-ons → "Piper". Config: select a voice (e.g. `en_US-lessac-medium`).
    - openWakeWord is **not needed** — wake word detection runs on-device.
 
 2. **Create a voice pipeline** — Settings → Voice assistants → Add assistant:
    - Conversation agent: Home Assistant (built-in, handles intents)
-   - Speech-to-text: Whisper
+   - Speech-to-text: Speech-to-Phrase
    - Text-to-speech: Piper
    - Wake word: leave empty (on-device)
 

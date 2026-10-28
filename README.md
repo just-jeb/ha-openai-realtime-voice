@@ -10,7 +10,7 @@ Voice interface for Home Assistant using the OpenAI Realtime API for low-latency
 - **Primary use:** Stationary voice Q&A device — you can tune it (e.g. short answers, language, tone) via the addon’s `instructions`. Common use cases include a family/kids device or a general-purpose voice assistant.
 - **Voice path (OpenAI):** "Okay Nabu" / button → WebSocket → HA addon → OpenAI Realtime API (speech-to-speech).
 - **Web search:** Handled inside the addon via a `search_web` tool that calls the OpenAI Responses API (optional separate API key).
-- **Smart home (HA Assist):** "Hey Mycroft" (99% cutoff) / double-click → ESPHome built-in `voice_assistant` → HA Assist pipeline (Whisper STT → Assist → Piper TTS). Fully local, no cloud. See [HA Assist setup](#ha-assist-pipeline-setup) below.
+- **Smart home (HA Assist):** "Hey Mycroft" (99% cutoff) / double-click → ESPHome built-in `voice_assistant` → HA Assist pipeline (Speech-to-Phrase STT → Assist → Piper TTS). Fully local, no cloud. See [HA Assist setup](#ha-assist-pipeline-setup) below.
 
 ## Components
 
@@ -58,14 +58,14 @@ The HA Assist pipeline handles local smart home commands ("turn on the kitchen l
 
 ### Prerequisites
 
-1. **Whisper addon** (local speech-to-text): Settings → Add-ons → Add-on Store → "Whisper". Configure: model `tiny-int8` or `base-int8`, set language.
+1. **Speech-to-Phrase addon** (local speech-to-text for commands): Settings → Add-ons → Add-on Store → "Speech-to-Phrase". It only recognizes fixed sentence templates filled with the names and aliases of entities exposed to Assist, which makes it far more accurate than Whisper for short commands. Its English templates accept "turn on/off <name>" for lights, switches, fans, media players and input booleans, but scenes only as "activate <name>" and scripts as "run <name>". To say "turn on game mode" for a scene, put the alias on an input boolean whose automation applies the scene. Whisper works too, for free-form speech, but mishears short commands more often.
 2. **Piper addon** (local text-to-speech): Settings → Add-ons → Add-on Store → "Piper". Configure: select a voice (e.g. `en_US-lessac-medium`).
 
 openWakeWord is **not needed** — wake word detection runs on the device.
 
 ### Configuration
 
-1. **Create a voice pipeline:** Settings → Voice assistants → Add assistant. Set conversation agent to "Home Assistant", STT to Whisper, TTS to Piper. Leave wake word empty.
+1. **Create a voice pipeline:** Settings → Voice assistants → Add assistant. Set conversation agent to "Home Assistant", STT to Speech-to-Phrase, TTS to Piper. Leave wake word empty.
 2. **Assign pipeline to device:** Settings → Devices → select your Voice PE → Configure → select the pipeline you created.
 3. **Expose entities:** Settings → Voice assistants → Expose tab. Select which entities (lights, switches, climate, etc.) Assist can control. Most entities are **not exposed by default**.
 
@@ -74,7 +74,7 @@ The device must be adopted in Home Assistant (Settings → Devices → ESPHome) 
 ### Limitations
 
 - HA's built-in conversation agent handles basic commands only. For complex queries, consider the [Extended OpenAI Conversation](https://github.com/jekalmin/extended_openai_conversation) custom integration.
-- Latency is higher than the OpenAI pipeline (Whisper transcription + Piper synthesis vs. streaming speech-to-speech).
+- Latency is higher than the OpenAI pipeline (speech-to-text + Piper synthesis vs. streaming speech-to-speech).
 
 ## Contributing
 
