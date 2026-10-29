@@ -246,7 +246,7 @@ binary_sensor:
               condition:
                 lambda: return !id(init_in_progress);
               then:
-                - script.execute: start_openai_pipeline
+                - script.execute: button_single_click
       # Double Click: Start/Stop HA Assist pipeline
       - timing:
           - ON for at most 1s
@@ -898,6 +898,28 @@ script:
           id: voice_media_player
           media_file: error_quota_sound
           announcement: true
+
+  # Single click: stop whichever pipeline is running (even mid-reply); start OpenAI if idle.
+  # The wake word keeps using start_openai_pipeline, where speaking means interrupt.
+  - id: button_single_click
+    then:
+      - if:
+          condition:
+            voice_assistant_websocket.is_running:
+              id: voice_assistant_ws
+          then:
+            - voice_assistant_websocket.stop:
+                id: voice_assistant_ws
+          else:
+            - if:
+                condition:
+                  voice_assistant.is_running:
+                    id: ha_voice_assistant
+                then:
+                  - voice_assistant.stop:
+                      id: ha_voice_assistant
+                else:
+                  - script.execute: start_openai_pipeline
 
   # Start OpenAI pipeline (stop HA Assist first if active)
   - id: start_openai_pipeline

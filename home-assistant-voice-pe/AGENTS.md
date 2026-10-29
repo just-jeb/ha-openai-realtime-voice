@@ -64,6 +64,10 @@ routing calls `start_ha_assist_pipeline` or
 `start_openai_pipeline` scripts which handle mutual exclusion (stopping
 the other pipeline if active) and mute/connection checks.
 
+**Single click always stops.** The `button_single_click` script stops whichever
+pipeline is running, even mid-reply, and starts OpenAI only when both are idle.
+Interrupt-and-listen is reserved for the OpenAI wake word.
+
 **Wake word attribution.** `on_wake_word_detected` logs the phrase at
 INFO and fires the HA event `esphome.wake_word_detected` with data
 `wake_word: <phrase>` via `homeassistant.event`. This needs
