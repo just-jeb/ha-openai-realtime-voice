@@ -1265,6 +1265,14 @@ voice_assistant_websocket:
               id: media_mixing_input
               decibel_reduction: 0
               duration: 1.0s
+          # Nothing else leaves the error phase, so without this the ring pulses red until the next pipeline run
+          - delay: 3s
+          - if:
+              condition:
+                lambda: return id(voice_assistant_phase) == ${voice_assist_error_phase_id};
+              then:
+                - lambda: id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};
+                - script.execute: control_leds
   on_quota_exceeded:
     # Play cha-ching sound, show alternating red-yellow LEDs for 4s, then stop
     - lambda: id(voice_assistant_phase) = ${voice_assist_quota_error_phase_id};
@@ -1320,6 +1328,14 @@ voice_assistant:
         id: media_mixing_input
         decibel_reduction: 0
         duration: 1.0s
+    # Nothing else leaves the error phase, so without this the ring pulses red until the next pipeline run
+    - delay: 3s
+    - if:
+        condition:
+          lambda: return id(voice_assistant_phase) == ${voice_assist_error_phase_id};
+        then:
+          - lambda: id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};
+          - script.execute: control_leds
 
 # Voice Kit Component - Voice PE Hardware (XMOS Firmware)
 # The XMOS XU316 chip has built-in audio processing support:
